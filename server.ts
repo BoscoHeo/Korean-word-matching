@@ -171,8 +171,16 @@ app.get("/api/learning-logs", (req, res) => {
 
 // POST /api/learning-logs - save a new game result
 app.post("/api/learning-logs", (req, res) => {
-  const logData: LearningLog = req.body;
-  if (!logData.studentName) {
+  let logData: LearningLog = req.body;
+  if (typeof logData === "string") {
+    try {
+      logData = JSON.parse(logData);
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!logData || !logData.studentName) {
     return res.status(400).json({ success: false, message: "학생 이름이 필요합니다." });
   }
 

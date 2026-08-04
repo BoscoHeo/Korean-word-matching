@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GameCard, WordItem, WrongWordRecord } from '../types';
 import { soundManager } from '../utils/sound';
-import { Timer, Award, CheckCircle2, Lightbulb, Flame, AlertCircle } from 'lucide-react';
+import { Timer, Award, CheckCircle2, Lightbulb, Flame, AlertCircle, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface GameBoardProps {
@@ -50,6 +50,99 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Progress ref for auto-saving on page unload/close
+  const progressRef = useRef({
+    studentName,
+    gradeClass,
+    selectedPages,
+    score,
+    timeElapsed,
+    completedWordsCount,
+    totalWordsCount,
+    wrongWordMap,
+    totalWrongAttempts,
+    hasSaved: false
+  });
+
+  useEffect(() => {
+    progressRef.current = {
+      studentName,
+      gradeClass,
+      selectedPages,
+      score,
+      timeElapsed,
+      completedWordsCount,
+      totalWordsCount,
+      wrongWordMap,
+      totalWrongAttempts,
+      hasSaved: progressRef.current.hasSaved
+    };
+  }, [studentName, gradeClass, selectedPages, score, timeElapsed, completedWordsCount, totalWordsCount, wrongWordMap, totalWrongAttempts]);
+
+  // Auto-save on page close or tab hidden
+  useEffect(() => {
+    const saveProgressOnUnload = () => {
+      const cur = progressRef.current;
+      if (cur.hasSaved) return;
+      // Do not save if no progress at all
+      if (cur.completedWordsCount === 0 && cur.totalWrongAttempts === 0 && cur.timeElapsed < 2) return;
+
+      cur.hasSaved = true;
+
+      const wrongWordsList: WrongWordRecord[] = Object.entries(cur.wrongWordMap).map(([w, data]: [string, { def: string; count: number }]) => ({
+        word: w,
+        def: data.def,
+        wrongMatchesCount: data.count
+      }));
+
+      const baseWords = cur.completedWordsCount > 0 ? cur.completedWordsCount : cur.totalWordsCount;
+      const accuracy = baseWords > 0
+        ? Math.max(0, Math.round(((baseWords - wrongWordsList.length) / baseWords) * 100))
+        : 0;
+
+      const logPayload = {
+        studentName: cur.studentName,
+        gradeClass: cur.gradeClass,
+        pages: cur.selectedPages,
+        totalWords: cur.totalWordsCount,
+        completedWords: cur.completedWordsCount,
+        score: cur.score,
+        timeElapsed: cur.timeElapsed,
+        accuracy,
+        wrongAttemptsCount: cur.totalWrongAttempts,
+        wrongWords: wrongWordsList,
+        timestamp: new Date().toISOString(),
+        mode: cur.completedWordsCount < cur.totalWordsCount ? 'standard (중단)' : 'standard'
+      };
+
+      const blob = new Blob([JSON.stringify(logPayload)], { type: 'application/json' });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/learning-logs', blob);
+      } else {
+        fetch('/api/learning-logs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(logPayload),
+          keepalive: true
+        });
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        saveProgressOnUnload();
+      }
+    };
+
+    window.addEventListener('beforeunload', saveProgressOnUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('beforeunload', saveProgressOnUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
   // Initialize Game Session
   useEffect(() => {
     soundManager.setSoundEnabled(soundEnabled);
@@ -62,6 +155,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     setTimeElapsed(0);
     setWrongWordMap({});
     setTotalWrongAttempts(0);
+    progressRef.current.hasSaved = false;
 
     // Timer interval
     timerRef.current = setInterval(() => {
@@ -192,6 +286,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
   const finishGame = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     soundManager.playVictory();
+    progressRef.current.hasSaved = true;
 
     const wrongWordsList: WrongWordRecord[] = Object.entries(wrongWordMap).map(([w, data]: [string, { def: string; count: number }]) => ({
       word: w,
@@ -200,6 +295,25 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     }));
 
     onGameComplete(score, timeElapsed, totalWordsCount, totalWordsCount, wrongWordsList, totalWrongAttempts);
+  };
+
+  const handleQuitAndSave = () => {
+    const confirmMsg = completedWordsCount > 0 || totalWrongAttempts > 0
+      ? `현재까지 학습한 내용을 저장하고 종료하시겠습니까?\n\n• 완료 어휘: ${completedWordsCount} / ${totalWordsCount}개\n• 획득 점수: ${score}점\n• 소요 시간: ${timeElapsed}초`
+      : `아직 어휘를 완료하지 않았습니다. 학습을 중단하고 기록을 저장하시겠습니까?`;
+
+    if (confirm(confirmMsg)) {
+      if (timerRef.current) clearInterval(timerRef.current);
+      progressRef.current.hasSaved = true;
+
+      const wrongWordsList: WrongWordRecord[] = Object.entries(wrongWordMap).map(([w, data]: [string, { def: string; count: number }]) => ({
+        word: w,
+        def: data.def,
+        wrongMatchesCount: data.count
+      }));
+
+      onGameComplete(score, timeElapsed, completedWordsCount, totalWordsCount, wrongWordsList, totalWrongAttempts);
+    }
   };
 
   // Hint feature: Highlights one matching pair briefly
@@ -280,20 +394,31 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         </div>
       </div>
 
-      {/* Control Bar & Hint Button */}
-      <div className="flex items-center justify-between mb-4">
+      {/* Control Bar & Action Buttons */}
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <p className="text-xs sm:text-sm font-semibold text-slate-600">
           💡 단어 카드와 어휘의 알맞은 뜻 카드를 선택하여 짝을 맞춰보세요!
         </p>
 
-        <button
-          onClick={handleUseHint}
-          disabled={hintActive || score < 20}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
-        >
-          <Lightbulb className="w-4 h-4 text-amber-600 fill-amber-400" />
-          <span>힌트 사용 (-20점)</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleUseHint}
+            disabled={hintActive || score < 20}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+          >
+            <Lightbulb className="w-4 h-4 text-amber-600 fill-amber-400" />
+            <span>힌트 (-20점)</span>
+          </button>
+
+          <button
+            onClick={handleQuitAndSave}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-xl text-xs font-bold transition-all"
+            title="현재까지 학습한 내용을 저장하고 종료합니다"
+          >
+            <LogOut className="w-4 h-4 text-rose-600" />
+            <span>중단 및 기록 저장</span>
+          </button>
+        </div>
       </div>
 
       {/* Cards Board Grid */}

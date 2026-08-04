@@ -141,7 +141,11 @@ export default function App() {
     wrongWords: WrongWordRecord[],
     wrongAttemptsCount: number
   ) => {
-    const accuracy = Math.round(((totalWords - wrongWords.length) / totalWords) * 100);
+    const isPartial = completedWords < totalWords;
+    const baseWords = completedWords > 0 ? completedWords : totalWords;
+    const accuracy = baseWords > 0
+      ? Math.max(0, Math.round(((baseWords - wrongWords.length) / baseWords) * 100))
+      : 0;
 
     const logPayload: Omit<LearningLog, 'id'> = {
       studentName,
@@ -155,10 +159,12 @@ export default function App() {
       wrongAttemptsCount,
       wrongWords,
       timestamp: new Date().toISOString(),
-      mode: 'standard'
+      mode: isPartial ? 'standard (중단)' : 'standard'
     };
 
-    let syncMsg = '✅ 학습 데이터가 저장되었습니다.';
+    let syncMsg = isPartial
+      ? `⏸️ 중간 중단됨 - 학습 완료 기록(${completedWords}/${totalWords}개 어휘 완료, ${score}점)이 성공적으로 저장되었습니다!`
+      : '✅ 학습 데이터가 성공적으로 저장되었습니다.';
 
     try {
       const res = await fetch('/api/learning-logs', {
@@ -171,7 +177,7 @@ export default function App() {
         loadLearningLogs(); // Refresh logs
       }
     } catch {
-      syncMsg = '⚠️ 로컬에 기록이 저장되었습니다.';
+      syncMsg = '⚠️ 서버 통신 오류로 기록이 임시 저장되었습니다.';
     }
 
     setLastResult({

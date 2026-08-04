@@ -33,7 +33,7 @@ export interface LearningLog {
   wrongAttemptsCount: number;
   wrongWords: WrongWordRecord[];
   timestamp: string;
-  mode: 'standard' | 'review' | 'custom';
+  mode: 'standard' | 'review' | 'custom' | 'standard (중단)' | string;
 }
 
 export interface StudentSummary {

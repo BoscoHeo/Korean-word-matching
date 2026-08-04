@@ -33,9 +33,14 @@ export const GameResults: React.FC<GameResultsProps> = ({
   onViewAnalytics,
   syncStatusMessage
 }) => {
-  const accuracy = Math.round(((totalWords - wrongWords.length) / totalWords) * 100);
+  const isPartial = completedWords < totalWords;
+  const baseWords = completedWords > 0 ? completedWords : totalWords;
+  const accuracy = baseWords > 0
+    ? Math.max(0, Math.round(((baseWords - wrongWords.length) / baseWords) * 100))
+    : 0;
 
   const getEvaluationGrade = () => {
+    if (isPartial) return { title: `⏸️ 학습 중단 기록 (${completedWords}/${totalWords}개 완료)`, color: 'text-amber-600 bg-amber-50 border-amber-200' };
     if (accuracy >= 100) return { title: '🌟 완벽한 어휘 마스터!', color: 'text-amber-600 bg-amber-50 border-amber-200' };
     if (accuracy >= 80) return { title: '🎖️ 우수한 문해력 실력자!', color: 'text-blue-600 bg-blue-50 border-blue-200' };
     return { title: '💪 차근차근 어휘 탐험가!', color: 'text-emerald-600 bg-emerald-50 border-emerald-200' };
@@ -46,22 +51,28 @@ export const GameResults: React.FC<GameResultsProps> = ({
   return (
     <div className="max-w-3xl mx-auto py-6 px-4">
       <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl overflow-hidden">
-        {/* Celebration Header */}
-        <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-700 p-8 sm:p-10 text-white text-center relative overflow-hidden">
+        {/* Celebration / Summary Header */}
+        <div className={`p-8 sm:p-10 text-white text-center relative overflow-hidden ${
+          isPartial
+            ? 'bg-gradient-to-br from-slate-700 via-slate-800 to-indigo-900'
+            : 'bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-700'
+        }`}>
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/20 backdrop-blur-md text-xs sm:text-sm font-bold mb-3">
             <Sparkles className="w-4 h-4 text-amber-300" />
-            <span>{selectedPages.join(', ')} 완료!</span>
+            <span>{selectedPages.join(', ')} {isPartial ? '중단 기록' : '완료'}</span>
           </div>
 
           <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-2">
-            🎉 참 잘했어요, {studentName} 학생!
+            {isPartial ? `👍 수고했어요, ${studentName} 학생!` : `🎉 참 잘했어요, ${studentName} 학생!`}
           </h2>
           <p className="text-blue-100 text-sm sm:text-base">
-            모든 단어 카드의 짝을 완벽하게 맞췄습니다. 학습 데이터가 자동으로 기록되었습니다.
+            {isPartial
+              ? `중간에 학습을 중단하였지만, 진행한 ${completedWords}개 어휘(${totalWords}개 중) 데이터가 안전하게 저장되었습니다.`
+              : '모든 단어 카드의 짝을 완벽하게 맞췄습니다. 학습 데이터가 자동으로 기록되었습니다.'}
           </p>
 
           <div className="mt-6 inline-block px-5 py-2 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20">
-            <span className={`text-base font-extrabold ${evalGrade.title.startsWith('🌟') ? 'text-amber-300' : 'text-white'}`}>
+            <span className="text-base font-extrabold text-amber-300">
               {evalGrade.title}
             </span>
           </div>
