@@ -1,0 +1,6 @@
+{
+  "name": "초등 문해력 어휘 단어 게임 & 학습 분석",
+  "description": "초등학생을 위한 맞춤형 문해력 어휘 짝맞추기 단어 게임 및 학생별 학습 데이터, 오답 분석, 학급 통계 리포트 시스템",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
