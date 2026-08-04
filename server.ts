@@ -378,15 +378,20 @@ app.post("/api/reset-words", (req, res) => {
 
 async function forwardToGoogleSheets(gasUrl: string, log: LearningLog) {
   try {
+    const isPartial = log.completedWords < log.totalWords;
+    const progressText = isPartial 
+      ? `(${log.completedWords}/${log.totalWords}단어 완료)` 
+      : `(총 ${log.totalWords}단어 완료)`;
+
     const payload = {
       studentName: log.studentName,
       gradeClass: log.gradeClass,
-      page: log.pages.join(", ") + ` (총 ${log.totalWords}단어)`,
+      page: `${log.pages.join(", ")} ${progressText}`,
       score: log.score,
       timeElapsedSeconds: log.timeElapsed,
       accuracy: `${log.accuracy}%`,
       timestamp: log.timestamp,
-      status: "완료"
+      status: log.mode || (isPartial ? "중단" : "완료")
     };
 
     await fetch(gasUrl, {
