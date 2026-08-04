@@ -124,7 +124,39 @@ export const GameBoard: React.FC<GameBoardProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(logPayload),
           keepalive: true
-        });
+        }).catch(() => {});
+      }
+
+      // Direct Google Sheets Apps Script Fallback for static hosts (Netlify)
+      const gasUrl = localStorage.getItem('teacher_gas_url') ||
+        'https://script.google.com/macros/s/AKfyeby7y17aCdMPi_NP6rWI4YXFuckniJLS2H620q0nXw0CEYsejHMTJYn-eFc_dnSruDvS/exec';
+      if (gasUrl) {
+        const isPartial = cur.completedWordsCount < cur.totalWordsCount;
+        const progressText = isPartial 
+          ? `(${cur.completedWordsCount}/${cur.totalWordsCount}단어 완료)` 
+          : `(총 ${cur.totalWordsCount}단어 완료)`;
+
+        const gasPayload = {
+          studentName: cur.studentName,
+          gradeClass: cur.gradeClass || '',
+          page: `${(cur.selectedPages || []).join(', ')} ${progressText}`,
+          score: cur.score,
+          timeElapsedSeconds: cur.timeElapsed,
+          accuracy: `${accuracy}%`,
+          status: isPartial ? 'standard (중단)' : 'standard'
+        };
+
+        try {
+          fetch(gasUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(gasPayload),
+            keepalive: true
+          }).catch(() => {});
+        } catch {
+          // ignore
+        }
       }
     };
 

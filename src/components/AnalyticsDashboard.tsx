@@ -52,38 +52,60 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
   // Teacher settings state
   const [gasUrlInput, setGasUrlInput] = useState('');
-  const [passcodeInput, setPasscodeInput] = useState('');
+  const [passcodeInput, setPasscodeInput] = useState('1234');
   const [settingsSaveMsg, setSettingsSaveMsg] = useState('');
 
   useEffect(() => {
+    // Load from localStorage first as instant fallback
+    const cachedSettings = localStorage.getItem('teacher_settings');
+    if (cachedSettings) {
+      try {
+        const parsed = JSON.parse(cachedSettings);
+        if (parsed.gasUrl) setGasUrlInput(parsed.gasUrl);
+        if (parsed.passcode) setPasscodeInput(parsed.passcode);
+      } catch {
+        // ignore
+      }
+    }
+
     fetch('/api/settings')
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.settings) {
-          setGasUrlInput(data.settings.gasUrl || '');
-          setPasscodeInput(data.settings.passcode || '1234');
+          if (data.settings.gasUrl) setGasUrlInput(data.settings.gasUrl);
+          if (data.settings.passcode) setPasscodeInput(data.settings.passcode);
+          localStorage.setItem('teacher_settings', JSON.stringify(data.settings));
+          if (data.settings.gasUrl) localStorage.setItem('teacher_gas_url', data.settings.gasUrl);
+          if (data.settings.passcode) localStorage.setItem('teacher_passcode', data.settings.passcode);
         }
       })
-      .catch((err) => console.error(err));
+      .catch((err) => console.log('Notice: Running in static mode or server offline', err));
   }, []);
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setSettingsSaveMsg('');
+    
+    const cleanGasUrl = gasUrlInput.trim();
+    const cleanPasscode = passcodeInput.trim() || '1234';
+
+    // Always persist to localStorage for client-side / Netlify compatibility
+    localStorage.setItem('teacher_gas_url', cleanGasUrl);
+    localStorage.setItem('teacher_passcode', cleanPasscode);
+    localStorage.setItem('teacher_settings', JSON.stringify({ gasUrl: cleanGasUrl, passcode: cleanPasscode }));
+
     try {
-      const res = await fetch('/api/settings', {
+      await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gasUrl: gasUrlInput.trim(), passcode: passcodeInput.trim() })
+        body: JSON.stringify({ gasUrl: cleanGasUrl, passcode: cleanPasscode })
       });
-      const data = await res.json();
-      if (data.success) {
-        setSettingsSaveMsg('✅ 선생님 설정(구글 시트 연동 주소 & 비밀번호)이 안전하게 저장되었습니다.');
-        setTimeout(() => setSettingsSaveMsg(''), 4000);
-      }
     } catch {
-      setSettingsSaveMsg('⚠️ 설정 저장 중 오류가 발생했습니다.');
+      // Ignore API server errors when deployed as static SPA
     }
+
+    setSettingsSaveMsg('✅ 선생님 설정(구글 시트 연동 주소 & 비밀번호)이 정상 저장되었습니다.');
+    setTimeout(() => setSettingsSaveMsg(''), 5000);
   };
 
   // Fetch Class Analytics

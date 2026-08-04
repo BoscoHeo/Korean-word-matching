@@ -177,7 +177,37 @@ export default function App() {
         loadLearningLogs(); // Refresh logs
       }
     } catch {
-      syncMsg = '⚠️ 서버 통신 오류로 기록이 임시 저장되었습니다.';
+      syncMsg = '⚠️ 로컬/시트 자동 전송 모드로 기록이 저장되었습니다.';
+    }
+
+    // Direct Google Sheets Apps Script Sync for Netlify/Static hosting
+    const gasUrl = localStorage.getItem('teacher_gas_url') ||
+      'https://script.google.com/macros/s/AKfyeby7y17aCdMPi_NP6rWI4YXFuckniJLS2H620q0nXw0CEYsejHMTJYn-eFc_dnSruDvS/exec';
+    if (gasUrl) {
+      const progressText = isPartial 
+        ? `(${completedWords}/${totalWords}단어 완료)` 
+        : `(총 ${totalWords}단어 완료)`;
+
+      const gasPayload = {
+        studentName,
+        gradeClass: gradeClass || '',
+        page: `${selectedPages.join(', ')} ${progressText}`,
+        score,
+        timeElapsedSeconds: timeElapsed,
+        accuracy: `${accuracy}%`,
+        status: isPartial ? 'standard (중단)' : 'standard'
+      };
+
+      try {
+        fetch(gasUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(gasPayload)
+        }).catch(() => {});
+      } catch {
+        // ignore
+      }
     }
 
     setLastResult({
