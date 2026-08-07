@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LearningLog, StudentSummary, ClassAnalytics } from '../types';
+import { LearningLog, StudentSummary, ClassAnalytics, LiveSession } from '../types';
 import {
   Users,
   Award,
@@ -19,7 +19,10 @@ import {
   ShieldCheck,
   KeyRound,
   Link as LinkIcon,
-  Save
+  Save,
+  Radio,
+  Activity,
+  PlayCircle
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -33,7 +36,7 @@ import {
   Line
 } from 'recharts';
 
-import { DEFAULT_PASSCODE } from '../constants';
+import { DEFAULT_PASSCODE, DEFAULT_GAS_URL } from '../constants';
 
 interface AnalyticsDashboardProps {
   logs: LearningLog[];
@@ -46,16 +49,42 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   onRefreshData,
   selectedStudentFilter = ''
 }) => {
-  const [activeTab, setActiveTab] = useState<'class' | 'student' | 'export' | 'settings'>('class');
+  const [activeTab, setActiveTab] = useState<'live' | 'class' | 'student' | 'export' | 'settings'>('live');
   const [classAnalytics, setClassAnalytics] = useState<ClassAnalytics | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<string>(selectedStudentFilter);
   const [studentSummary, setStudentSummary] = useState<StudentSummary | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Live session state
+  const [liveSessions, setLiveSessions] = useState<(LiveSession & { isActive?: boolean })[]>([]);
+  const [autoRefreshLive, setAutoRefreshLive] = useState(true);
+
   // Teacher settings state
-  const [gasUrlInput, setGasUrlInput] = useState('');
+  const [gasUrlInput, setGasUrlInput] = useState(DEFAULT_GAS_URL);
   const [passcodeInput, setPasscodeInput] = useState(DEFAULT_PASSCODE);
   const [settingsSaveMsg, setSettingsSaveMsg] = useState('');
+
+  const fetchLiveSessions = () => {
+    fetch('/api/live-sessions')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.sessions) {
+          setLiveSessions(data.sessions);
+        }
+      })
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    fetchLiveSessions();
+    let interval: any;
+    if (autoRefreshLive) {
+      interval = setInterval(fetchLiveSessions, 3000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [autoRefreshLive]);
 
   useEffect(() => {
     // Load from localStorage first as instant fallback
@@ -222,7 +251,24 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-1">
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-1 flex-wrap">
+        <button
+          onClick={() => setActiveTab('live')}
+          className={`px-4 py-2 rounded-xl text-sm font-bold transition flex items-center gap-2 ${
+            activeTab === 'live'
+              ? 'bg-rose-600 text-white shadow-sm ring-2 ring-rose-300'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Radio className="w-4 h-4 text-rose-300 animate-pulse" />
+          <span>🔴 실시간 라이브 현황</span>
+          {liveSessions.filter((s) => s.isActive && !s.isCompleted).length > 0 && (
+            <span className="ml-1 px-2 py-0.5 text-xs bg-rose-500 text-white font-extrabold rounded-full">
+              {liveSessions.filter((s) => s.isActive && !s.isCompleted).length}명
+            </span>
+          )}
+        </button>
+
         <button
           onClick={() => setActiveTab('class')}
           className={`px-4 py-2 rounded-xl text-sm font-bold transition flex items-center gap-2 ${
@@ -271,6 +317,158 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           <span>선생님 환경 설정</span>
         </button>
       </div>
+
+      {/* TAB 0: LIVE MONITORING */}
+      {activeTab === 'live' && (
+        <div className="space-y-6">
+          {/* Live Status Bar */}
+          <div className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white rounded-2xl p-6 shadow-md flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-2xl animate-pulse">
+                <Radio className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  <span>실시간 라이브 현황 모니터링</span>
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-rose-500/30 text-rose-300 border border-rose-500/40 font-extrabold">
+                    LIVE
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  학생들의 실시간 게임 풀이 과정(진행률, 시간, 오답)을 즉시 추적합니다. (3초 자동 동기화)
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-xs text-slate-300 font-bold bg-white/10 px-3 py-1.5 rounded-xl cursor-pointer hover:bg-white/15 transition">
+                <input
+                  type="checkbox"
+                  checked={autoRefreshLive}
+                  onChange={(e) => setAutoRefreshLive(e.target.checked)}
+                  className="rounded text-rose-500 focus:ring-0"
+                />
+                <span>3초 자동 새로고침</span>
+              </label>
+
+              <button
+                type="button"
+                onClick={fetchLiveSessions}
+                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>지금 새로고침</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Active Live Grid */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                <Activity className="w-4 h-4 text-rose-600" />
+                <span>참여 중인 학생 현황 ({liveSessions.length}명)</span>
+              </h4>
+              <span className="text-xs text-slate-500">
+                진행 중: <strong className="text-rose-600">{liveSessions.filter(s => s.isActive && !s.isCompleted).length}명</strong> | 완료: <strong className="text-emerald-600">{liveSessions.filter(s => s.isCompleted).length}명</strong>
+              </span>
+            </div>
+
+            {liveSessions.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center space-y-3">
+                <PlayCircle className="w-12 h-12 text-slate-300 mx-auto" />
+                <h5 className="font-bold text-slate-700 text-base">현재 실시간 접속하여 풀이 중인 학생이 없습니다</h5>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  학생들이 메인 화면에서 이름을 입력하고 단어 학습 게임을 시작하면, 이곳 교사 대시보드에 진행 상태와 실시간 맞춘 쌍 개수가 즉시 생중계됩니다!
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {liveSessions.map((session) => {
+                  const pct = session.totalPairs > 0 ? Math.round((session.matchedPairs / session.totalPairs) * 100) : 0;
+                  const minutes = Math.floor((session.timeElapsed || 0) / 60);
+                  const seconds = (session.timeElapsed || 0) % 60;
+                  const formattedTime = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+
+                  return (
+                    <div
+                      key={session.sessionId}
+                      className={`bg-white border rounded-2xl p-5 shadow-sm space-y-4 transition-all relative overflow-hidden ${
+                        session.isCompleted
+                          ? 'border-emerald-200 bg-emerald-50/20'
+                          : session.isActive
+                          ? 'border-rose-300 ring-2 ring-rose-100'
+                          : 'border-slate-200 opacity-75'
+                      }`}
+                    >
+                      {/* Top badge */}
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h5 className="font-black text-slate-900 text-base flex items-center gap-2">
+                            <span>{session.studentName}</span>
+                            {session.gradeClass && (
+                              <span className="text-xs font-normal text-slate-500">({session.gradeClass})</span>
+                            )}
+                          </h5>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            학습: {(session.selectedPages || []).join(', ')}
+                          </p>
+                        </div>
+
+                        {session.isCompleted ? (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            완료됨
+                          </span>
+                        ) : session.isActive ? (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-black bg-rose-100 text-rose-800 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping" />
+                            풀이 중
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600">
+                            일시 중단
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs font-bold">
+                          <span className="text-slate-600">진행률 ({session.matchedPairs} / {session.totalPairs} 쌍)</span>
+                          <span className="text-rose-600 font-black">{pct}%</span>
+                        </div>
+                        <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full transition-all duration-500 ${
+                              session.isCompleted ? 'bg-emerald-500' : 'bg-rose-500'
+                            }`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Stats Grid */}
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-xs">
+                        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                          <span className="text-slate-400 block text-[10px]">진행 시간</span>
+                          <span className="font-extrabold text-slate-800 font-mono text-sm">{formattedTime}</span>
+                        </div>
+                        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                          <span className="text-slate-400 block text-[10px]">실수(오답) 횟수</span>
+                          <span className={`font-extrabold text-sm ${session.wrongAttempts > 0 ? 'text-amber-600' : 'text-slate-800'}`}>
+                            {session.wrongAttempts}회
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: CLASS OVERVIEW */}
       {activeTab === 'class' && classAnalytics && (

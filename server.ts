@@ -3,12 +3,26 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { INITIAL_VOCABULARY_DATA } from "./src/data/initialWords.js";
-import { LearningLog, TeacherSettings } from "./src/types";
+import { LearningLog, TeacherSettings, LiveSession } from "./src/types";
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+
+// Live active sessions stored in memory
+const liveSessionsMap = new Map<string, LiveSession>();
+
+// Cleanup stale sessions older than 15 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of liveSessionsMap.entries()) {
+    const updated = new Date(session.lastUpdated).getTime();
+    if (now - updated > 15 * 60 * 1000) {
+      liveSessionsMap.delete(id);
+    }
+  }
+}, 60 * 1000);
 
 // Ensure data folder exists
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -41,11 +55,20 @@ function loadStore(): DataStore {
     const raw = fs.readFileSync(STORE_FILE, "utf-8");
     const data = JSON.parse(raw);
     if (!data.settings) {
-      data.settings = { gasUrl: "", autoSyncGoogleSheets: false, passcode: "130707" };
+      data.settings = { gasUrl: "https://script.google.com/macros/s/AKfycby7y17aCdMPi_NP6rWl4YXfUckniJLS2H620q0nXw0CEYSejHMTJYn-eFc_dnSruDvS/exec", autoSyncGoogleSheets: true, passcode: "130707" };
       saveStore(data);
-    } else if (!data.settings.passcode) {
-      data.settings.passcode = "130707";
-      saveStore(data);
+    } else {
+      let changed = false;
+      if (!data.settings.gasUrl) {
+        data.settings.gasUrl = "https://script.google.com/macros/s/AKfycby7y17aCdMPi_NP6rWl4YXfUckniJLS2H620q0nXw0CEYSejHMTJYn-eFc_dnSruDvS/exec";
+        data.settings.autoSyncGoogleSheets = true;
+        changed = true;
+      }
+      if (!data.settings.passcode || data.settings.passcode === "1234") {
+        data.settings.passcode = "130707";
+        changed = true;
+      }
+      if (changed) saveStore(data);
     }
     if (!data.vocabulary || Object.keys(data.vocabulary).length === 0) {
       data.vocabulary = INITIAL_VOCABULARY_DATA;
@@ -327,6 +350,44 @@ app.get("/api/analytics/class", (req, res) => {
       dailyActivity
     }
   });
+});
+
+// POST /api/live-session - update or create a student's real-time playing progress
+app.post("/api/live-session", (req, res) => {
+  const sessionData: LiveSession = req.body;
+  if (!sessionData || !sessionData.sessionId || !sessionData.studentName) {
+    return res.status(400).json({ success: false, message: "올바른 세션 정보가 없습니다." });
+  }
+
+  liveSessionsMap.set(sessionData.sessionId, {
+    ...sessionData,
+    lastUpdated: new Date().toISOString()
+  });
+
+  res.json({ success: true });
+});
+
+// GET /api/live-sessions - fetch active live sessions for teacher dashboard
+app.get("/api/live-sessions", (req, res) => {
+  const now = Date.now();
+  const sessions = Array.from(liveSessionsMap.values())
+    .map(s => {
+      const diffSec = Math.floor((now - new Date(s.lastUpdated).getTime()) / 1000);
+      return {
+        ...s,
+        isActive: diffSec < 90 // active if pinged within 90s
+      };
+    })
+    .sort((a, b) => new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime());
+
+  res.json({ success: true, sessions });
+});
+
+// DELETE /api/live-session/:id
+app.delete("/api/live-session/:id", (req, res) => {
+  const { id } = req.params;
+  liveSessionsMap.delete(id);
+  res.json({ success: true });
 });
 
 // POST /api/verify-pin

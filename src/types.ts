@@ -62,3 +62,17 @@ export interface TeacherSettings {
   autoSyncGoogleSheets?: boolean;
   passcode?: string;
 }
+
+export interface LiveSession {
+  sessionId: string;
+  studentName: string;
+  gradeClass: string;
+  totalPairs: number;
+  matchedPairs: number;
+  wrongAttempts: number;
+  timeElapsed: number;
+  isCompleted: boolean;
+  selectedPages: string[];
+  gameMode: string;
+  lastUpdated: string;
+}

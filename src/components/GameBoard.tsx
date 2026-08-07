@@ -49,6 +49,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
   const [shakingCards, setShakingCards] = useState<string[]>([]);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const sessionIdRef = useRef<string>(`session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
 
   // Progress ref for auto-saving on page unload/close
   const progressRef = useRef({
@@ -63,6 +64,29 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     totalWrongAttempts,
     hasSaved: false
   });
+
+  const sendLiveSessionUpdate = (isCompleted = false) => {
+    const cur = progressRef.current;
+    if (!cur.studentName) return;
+    const payload = {
+      sessionId: sessionIdRef.current,
+      studentName: cur.studentName,
+      gradeClass: cur.gradeClass,
+      totalPairs: cur.totalWordsCount,
+      matchedPairs: cur.completedWordsCount,
+      wrongAttempts: cur.totalWrongAttempts,
+      timeElapsed: cur.timeElapsed,
+      isCompleted,
+      selectedPages: cur.selectedPages,
+      gameMode: 'standard'
+    };
+
+    fetch('/api/live-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(() => {});
+  };
 
   useEffect(() => {
     progressRef.current = {
@@ -189,9 +213,18 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     setTotalWrongAttempts(0);
     progressRef.current.hasSaved = false;
 
+    // Initial live ping
+    setTimeout(() => sendLiveSessionUpdate(false), 200);
+
     // Timer interval
     timerRef.current = setInterval(() => {
-      setTimeElapsed((prev) => prev + 1);
+      setTimeElapsed((prev) => {
+        const next = prev + 1;
+        if (next % 3 === 0) {
+          sendLiveSessionUpdate(false);
+        }
+        return next;
+      });
     }, 1000);
 
     setupRound(shuffledPool);
@@ -318,6 +351,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
   const finishGame = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     soundManager.playVictory();
+    sendLiveSessionUpdate(true);
     progressRef.current.hasSaved = true;
 
     const wrongWordsList: WrongWordRecord[] = Object.entries(wrongWordMap).map(([w, data]: [string, { def: string; count: number }]) => ({

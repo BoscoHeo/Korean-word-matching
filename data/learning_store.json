@@ -4409,7 +4409,8 @@
     }
   ],
   "settings": {
-    "gasUrl": "",
-    "autoSyncGoogleSheets": false
+    "gasUrl": "https://script.google.com/macros/s/AKfycby7y17aCdMPi_NP6rWl4YXfUckniJLS2H620q0nXw0CEYSejHMTJYn-eFc_dnSruDvS/exec",
+    "autoSyncGoogleSheets": true,
+    "passcode": "130707"
   }
 }

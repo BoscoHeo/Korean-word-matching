@@ -8,6 +8,7 @@ import { VocabularyManager } from './components/VocabularyManager';
 import { TeacherAuthModal } from './components/TeacherAuthModal';
 import { WordItem, LearningLog, WrongWordRecord } from './types';
 import { INITIAL_VOCABULARY_DATA } from './data/initialWords';
+import { DEFAULT_GAS_URL } from './constants';
 
 export default function App() {
   const [activeNav, setActiveNav] = useState<'game' | 'analytics' | 'words' | 'settings'>('game');
@@ -244,8 +245,7 @@ export default function App() {
     }
 
     // Direct Google Sheets Apps Script Sync for Netlify/Static hosting
-    const gasUrl = localStorage.getItem('teacher_gas_url') ||
-      'https://script.google.com/macros/s/AKfyeby7y17aCdMPi_NP6rWI4YXFuckniJLS2H620q0nXw0CEYsejHMTJYn-eFc_dnSruDvS/exec';
+    const gasUrl = localStorage.getItem('teacher_gas_url') || DEFAULT_GAS_URL;
     if (gasUrl) {
       const progressText = isPartial 
         ? `(${completedWords}/${totalWords}단어 완료)` 
