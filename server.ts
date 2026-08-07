@@ -355,12 +355,17 @@ app.get("/api/analytics/class", (req, res) => {
 // POST /api/live-session - update or create a student's real-time playing progress
 app.post("/api/live-session", (req, res) => {
   const sessionData: LiveSession = req.body;
-  if (!sessionData || !sessionData.sessionId || !sessionData.studentName) {
+  if (!sessionData || !sessionData.sessionId) {
     return res.status(400).json({ success: false, message: "올바른 세션 정보가 없습니다." });
   }
 
+  const nameToUse = (sessionData.studentName && sessionData.studentName.trim()) 
+    ? sessionData.studentName.trim() 
+    : '익명 학생';
+
   liveSessionsMap.set(sessionData.sessionId, {
     ...sessionData,
+    studentName: nameToUse,
     lastUpdated: new Date().toISOString()
   });
 

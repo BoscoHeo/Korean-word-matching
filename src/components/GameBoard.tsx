@@ -65,19 +65,19 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     hasSaved: false
   });
 
-  const sendLiveSessionUpdate = (isCompleted = false) => {
-    const cur = progressRef.current;
-    if (!cur.studentName) return;
+  const sendLiveSessionUpdate = (isCompleted = false, overrideData?: Partial<typeof progressRef.current>) => {
+    const cur = { ...progressRef.current, ...overrideData };
+    const nameToUse = (cur.studentName && cur.studentName.trim()) ? cur.studentName.trim() : '익명 학생';
     const payload = {
       sessionId: sessionIdRef.current,
-      studentName: cur.studentName,
-      gradeClass: cur.gradeClass,
+      studentName: nameToUse,
+      gradeClass: cur.gradeClass || '',
       totalPairs: cur.totalWordsCount,
       matchedPairs: cur.completedWordsCount,
       wrongAttempts: cur.totalWrongAttempts,
       timeElapsed: cur.timeElapsed,
       isCompleted,
-      selectedPages: cur.selectedPages,
+      selectedPages: cur.selectedPages || [],
       gameMode: 'standard'
     };
 
@@ -213,15 +213,22 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     setTotalWrongAttempts(0);
     progressRef.current.hasSaved = false;
 
-    // Initial live ping
-    setTimeout(() => sendLiveSessionUpdate(false), 200);
+    // Initial live ping with exact initial data
+    setTimeout(() => {
+      sendLiveSessionUpdate(false, {
+        totalWordsCount: wordsPool.length,
+        completedWordsCount: 0,
+        timeElapsed: 0,
+        totalWrongAttempts: 0
+      });
+    }, 100);
 
     // Timer interval
     timerRef.current = setInterval(() => {
       setTimeElapsed((prev) => {
         const next = prev + 1;
-        if (next % 3 === 0) {
-          sendLiveSessionUpdate(false);
+        if (next % 2 === 0) {
+          sendLiveSessionUpdate(false, { timeElapsed: next });
         }
         return next;
       });
@@ -307,6 +314,9 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         const newCompleted = completedWordsCount + 1;
         setCompletedWordsCount(newCompleted);
 
+        // Immediate live ping on card match
+        sendLiveSessionUpdate(false, { completedWordsCount: newCompleted });
+
         setSelectedCards([]);
 
         // Check if all cards in current round matched
@@ -323,7 +333,9 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         // MATCH FAILURE
         soundManager.playWrong();
         setCombo(0);
-        setTotalWrongAttempts((prev) => prev + 1);
+        const newWrong = totalWrongAttempts + 1;
+        setTotalWrongAttempts(newWrong);
+        sendLiveSessionUpdate(false, { totalWrongAttempts: newWrong });
 
         // Record wrong word for wrong answer note
         const targetWordObj = currentRoundWords.find((w) => w.word === card1.wordId || w.word === card2.wordId);
