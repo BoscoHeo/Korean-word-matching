@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Play, CheckSquare, Square, User, Link as LinkIcon, AlertCircle, BookOpen, RotateCcw } from 'lucide-react';
+import { LearningLog } from '../types';
 
 interface GameSetupProps {
   availablePages: Record<string, { word: string; def: string }[]>;
@@ -13,6 +14,7 @@ interface GameSetupProps {
   initialStudentName?: string;
   initialGradeClass?: string;
   hasWrongWordsForReview?: boolean;
+  logs?: LearningLog[];
 }
 
 export const GameSetup: React.FC<GameSetupProps> = ({
@@ -20,7 +22,8 @@ export const GameSetup: React.FC<GameSetupProps> = ({
   onStartGame,
   initialStudentName = '',
   initialGradeClass = '',
-  hasWrongWordsForReview = false
+  hasWrongWordsForReview = false,
+  logs = []
 }) => {
   const [studentName, setStudentName] = useState(initialStudentName);
   const [gradeClass, setGradeClass] = useState(initialGradeClass);
@@ -32,6 +35,28 @@ export const GameSetup: React.FC<GameSetupProps> = ({
   const [errorMsg, setErrorMsg] = useState('');
 
   const pageNames = Object.keys(availablePages);
+
+  // Compute wrong words count dynamically for entered student name or overall logs
+  const getWrongCount = () => {
+    if (!logs || logs.length === 0) return 0;
+    const trimmed = studentName.trim();
+    const studentLogs = trimmed
+      ? logs.filter((l) => l.studentName.trim() === trimmed)
+      : logs;
+    const wrongSet = new Set<string>();
+    studentLogs.forEach((l) => {
+      (l.wrongWords || []).forEach((w) => wrongSet.add(w.word));
+    });
+
+    if (wrongSet.size === 0 && trimmed) {
+      logs.forEach((l) => {
+        (l.wrongWords || []).forEach((w) => wrongSet.add(w.word));
+      });
+    }
+    return wrongSet.size;
+  };
+
+  const wrongCount = getWrongCount();
 
   const togglePage = (pageName: string) => {
     if (selectedPages.includes(pageName)) {
@@ -65,6 +90,10 @@ export const GameSetup: React.FC<GameSetupProps> = ({
     }
     if (gameMode === 'standard' && selectedPages.length === 0) {
       setErrorMsg('최소 1개 이상의 학습 페이지를 선택해 주세요!');
+      return;
+    }
+    if (gameMode === 'review' && wrongCount === 0) {
+      setErrorMsg('이전에 틀렸던 오답 기록이 없습니다. 먼저 일반 모드로 학습을 진행해 보세요!');
       return;
     }
     setErrorMsg('');
@@ -153,21 +182,33 @@ export const GameSetup: React.FC<GameSetupProps> = ({
 
               <button
                 type="button"
-                onClick={() => setGameMode('review')}
-                disabled={!hasWrongWordsForReview}
-                className={`p-4 rounded-xl border text-left flex items-start gap-3 transition-all ${
+                onClick={() => {
+                  setGameMode('review');
+                  if (wrongCount === 0) {
+                    setErrorMsg('이전에 틀렸던 오답 기록이 없습니다. 먼저 일반 모드로 학습을 진행해 보세요!');
+                  } else {
+                    setErrorMsg('');
+                  }
+                }}
+                className={`p-4 rounded-xl border text-left flex items-start gap-3 transition-all cursor-pointer ${
                   gameMode === 'review'
                     ? 'border-amber-600 bg-amber-50/70 ring-2 ring-amber-500/20'
                     : 'border-slate-200 bg-slate-50 hover:bg-slate-100'
-                } ${!hasWrongWordsForReview ? 'opacity-60 cursor-not-allowed' : ''}`}
+                }`}
               >
                 <div className={`p-2 rounded-lg ${gameMode === 'review' ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
                   <RotateCcw className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-slate-900 text-sm flex items-center gap-1">
+                  <h4 className="font-bold text-slate-900 text-sm flex items-center gap-1.5 flex-wrap">
                     <span>오답 노트 집중 재학습</span>
-                    {!hasWrongWordsForReview && <span className="text-[10px] text-slate-400 font-normal">(기록 없음)</span>}
+                    {wrongCount > 0 ? (
+                      <span className="text-[11px] font-bold px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full">
+                        오답 {wrongCount}개 보유
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 font-normal">(오답 기록 0개)</span>
+                    )}
                   </h4>
                   <p className="text-xs text-slate-500 mt-0.5">이전에 틀렸던 단어들만 모아 집중적으로 복습합니다.</p>
                 </div>

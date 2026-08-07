@@ -333,7 +333,7 @@ app.get("/api/analytics/class", (req, res) => {
 app.post("/api/verify-pin", (req, res) => {
   const { pin } = req.body;
   const store = loadStore();
-  const currentPin = store.settings?.passcode || "1234";
+  const currentPin = store.settings?.passcode || "130707";
   if (pin === currentPin) {
     return res.json({ success: true, message: "선생님 인증에 성공했습니다." });
   } else {
@@ -354,7 +354,7 @@ app.post("/api/settings", (req, res) => {
     ...store.settings,
     gasUrl: gasUrl !== undefined ? gasUrl : store.settings?.gasUrl,
     autoSyncGoogleSheets: autoSyncGoogleSheets !== undefined ? autoSyncGoogleSheets : store.settings?.autoSyncGoogleSheets,
-    passcode: passcode !== undefined ? passcode : (store.settings?.passcode || "1234")
+    passcode: passcode !== undefined ? passcode : (store.settings?.passcode || "130707")
   };
   saveStore(store);
   res.json({ success: true, settings: store.settings, message: "선생님 환경설정이 저장되었습니다." });

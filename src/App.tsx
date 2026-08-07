@@ -94,8 +94,9 @@ export default function App() {
     let wordsToPlay: WordItem[] = [];
 
     if (mode === 'review') {
-      // Collect wrong words for this student across prior logs
-      const studentLogs = logs.filter((l) => l.studentName === name);
+      // Collect wrong words for this student across prior logs (with trim comparison)
+      const trimmedName = name.trim();
+      const studentLogs = logs.filter((l) => l.studentName.trim() === trimmedName);
       const wrongMap = new Map<string, WordItem>();
 
       studentLogs.forEach((l) => {
@@ -106,27 +107,89 @@ export default function App() {
         });
       });
 
-      wordsToPlay = Array.from(wrongMap.values());
+      // Fallback: If no wrong words for specific student name, use all wrong words in system logs
+      if (wrongMap.size === 0) {
+        logs.forEach((l) => {
+          (l.wrongWords || []).forEach((w) => {
+            if (!wrongMap.has(w.word)) {
+              wrongMap.set(w.word, { id: w.word, word: w.word, def: w.def, page: '오답노트' });
+            }
+          });
+        });
+      }
+
+      wordsToPlay = Array.from(wrongMap.values()).sort(() => Math.random() - 0.5);
       if (wordsToPlay.length === 0) {
-        alert('이전에 틀린 단어가 없습니다! 일반 페이지를 선택해 주세요.');
+        alert('이전에 틀린 단어 기록이 없습니다! 먼저 일반 페이지를 선택하여 학습을 진행해 주세요.');
         return;
       }
     } else {
       // Collect words from selected pages
-      pages.forEach((pName) => {
-        const pageWords = vocabulary[pName];
-        if (pageWords) {
-          pageWords.forEach((item) => {
-            wordsToPlay.push({
-              id: `${pName}_${item.word}`,
+      if (pages.length > 1) {
+        // 복수 페이지 선택 시: 총 문제 수 최대 80개 제한 및 각 페이지 균등 비율 수집
+        const MAX_MULTI_PAGE_LIMIT = 80;
+        const pageWordMap: Record<number, WordItem[]> = {};
+        let totalAvailable = 0;
+
+        pages.forEach((pNum) => {
+          const rawItems = vocabulary[pNum] || [];
+          const items: WordItem[] = rawItems
+            .map((item) => ({
+              id: `${pNum}_${item.word}`,
               word: item.word,
               def: item.def,
-              page: pName,
+              page: `${pNum}페이지`,
               example: item.example
-            });
-          });
+            }))
+            .sort(() => Math.random() - 0.5); // 페이지 내 무작위 셔플
+
+          pageWordMap[pNum] = items;
+          totalAvailable += items.length;
+        });
+
+        const targetTotal = Math.min(MAX_MULTI_PAGE_LIMIT, totalAvailable);
+        const selectedList: WordItem[] = [];
+        const pagePointers: Record<number, number> = {};
+        pages.forEach((pNum) => {
+          pagePointers[pNum] = 0;
+        });
+
+        let addedCount = 0;
+        while (addedCount < targetTotal) {
+          let addedInPass = false;
+          for (const pNum of pages) {
+            if (addedCount >= targetTotal) break;
+            const idx = pagePointers[pNum];
+            const list = pageWordMap[pNum];
+            if (idx < list.length) {
+              selectedList.push(list[idx]);
+              pagePointers[pNum] = idx + 1;
+              addedCount++;
+              addedInPass = true;
+            }
+          }
+          if (!addedInPass) break;
         }
-      });
+
+        // 균등 추출된 단어들을 최종 무작위 셔플
+        wordsToPlay = selectedList.sort(() => Math.random() - 0.5);
+      } else {
+        // 단일 페이지 선택 시: 기존대로 전체 단어 수집
+        pages.forEach((pNum) => {
+          const pageWords = vocabulary[pNum];
+          if (pageWords) {
+            pageWords.forEach((item) => {
+              wordsToPlay.push({
+                id: `${pNum}_${item.word}`,
+                word: item.word,
+                def: item.def,
+                page: `${pNum}페이지`,
+                example: item.example
+              });
+            });
+          }
+        });
+      }
     }
 
     setGameWordsPool(wordsToPlay);
@@ -330,6 +393,7 @@ export default function App() {
                 initialStudentName={studentName}
                 initialGradeClass={gradeClass}
                 hasWrongWordsForReview={hasWrongWordsForStudent}
+                logs={logs}
               />
             )}
 

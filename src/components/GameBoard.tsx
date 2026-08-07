@@ -485,7 +485,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     ? 'bg-red-500 text-white ring-4 ring-red-300'
                     : card.type === 'word'
                     ? 'bg-blue-600 hover:bg-blue-700 text-white hover:-translate-y-1 hover:shadow-lg'
-                    : 'bg-indigo-600 hover:bg-indigo-700 text-white hover:-translate-y-1 hover:shadow-lg'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white hover:-translate-y-1 hover:shadow-lg'
                 }`}
               >
                 <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-black/15 text-white/90 uppercase">
