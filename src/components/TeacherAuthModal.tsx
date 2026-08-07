@@ -109,12 +109,12 @@ export const TeacherAuthModal: React.FC<TeacherAuthModalProps> = ({
               type="password"
               value={pin}
               onChange={(e) => setPin(e.target.value)}
-              placeholder={`비밀번호 입력 (기본: ${DEFAULT_PASSCODE})`}
+              placeholder="비밀번호 입력"
               className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-extrabold tracking-widest outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition text-center"
               autoFocus
             />
             <p className="text-[11px] text-slate-400 mt-1.5 text-center">
-              * 초기 설정 비밀번호: <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-mono font-bold">{DEFAULT_PASSCODE}</code> (대시보드에서 변경 가능)
+              * 선생님 전용 비밀번호를 입력해 주세요. (대시보드 내 설정에서 변경 가능)
             </p>
           </div>
 

@@ -89,7 +89,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     setSettingsSaveMsg('');
     
     const cleanGasUrl = gasUrlInput.trim();
-    const cleanPasscode = passcodeInput.trim() || '1234';
+    const cleanPasscode = passcodeInput.trim() || DEFAULT_PASSCODE;
 
     // Always persist to localStorage for client-side / Netlify compatibility
     localStorage.setItem('teacher_gas_url', cleanGasUrl);
@@ -634,11 +634,11 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
               type="password"
               value={passcodeInput}
               onChange={(e) => setPasscodeInput(e.target.value)}
-              placeholder={`기본 비밀번호: ${DEFAULT_PASSCODE}`}
+              placeholder="새 비밀번호 입력"
               className="w-48 px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-bold tracking-widest outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-slate-900"
             />
             <p className="text-xs text-slate-500">
-              * 아이들이 다른 학생들의 개별 데이터 및 단어장 편집에 접근하지 못하도록 보호하는 비밀번호입니다. (기본값: <code className="bg-slate-100 px-1 py-0.5 rounded font-mono font-bold">{DEFAULT_PASSCODE}</code>)
+              * 학생들이 개별 성적 및 단어장 관리에 접근하지 못하도록 보호하는 비밀번호입니다. 선생님만의 새로운 비밀번호로 변경하여 저장하실 수 있습니다.
             </p>
           </div>
 

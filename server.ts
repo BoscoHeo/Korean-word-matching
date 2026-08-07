@@ -41,10 +41,10 @@ function loadStore(): DataStore {
     const raw = fs.readFileSync(STORE_FILE, "utf-8");
     const data = JSON.parse(raw);
     if (!data.settings) {
-      data.settings = { gasUrl: "", autoSyncGoogleSheets: true, passcode: "1234" };
+      data.settings = { gasUrl: "", autoSyncGoogleSheets: false, passcode: "130707" };
       saveStore(data);
     } else if (!data.settings.passcode) {
-      data.settings.passcode = "1234";
+      data.settings.passcode = "130707";
       saveStore(data);
     }
     if (!data.vocabulary || Object.keys(data.vocabulary).length === 0) {
