@@ -333,6 +333,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     );
   });
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    await onRefreshData();
+    setTimeout(() => setIsRefreshing(false), 600);
+  };
+
   return (
     <div className="max-w-7xl mx-auto py-6 px-4 space-y-6">
       {/* Top Banner & Refresh */}
@@ -348,11 +356,12 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
         <div className="flex items-center gap-2">
           <button
-            onClick={onRefreshData}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition"
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition disabled:opacity-50"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>데이터 새로고침</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
+            <span>{isRefreshing ? '동기화 중...' : '데이터 새로고침'}</span>
           </button>
 
           <button
@@ -904,10 +913,10 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           <div className="border-b border-slate-200 pb-4">
             <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <ShieldCheck className="w-5 h-5 text-blue-600" />
-              <span>선생님 전용 시스템 및 데이터 연동 설정</span>
+              <span>선생님 전용 시스템 및 구글 스프레드시트 연동 가이드</span>
             </h3>
             <p className="text-xs text-slate-500 mt-1">
-              학생들이 구글 웹앱 주소를 입력하지 않고도 성적이 자동 수집되는 설정 및 보안 비밀번호 관리
+              Netlify/웹 어디서든 학생들의 게임 결과가 선생님 구글 시트에 실시간 자동 수집되고, 웹 대시보드에 즉시 동기화됩니다.
             </p>
           </div>
 
@@ -921,20 +930,108 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           <div className="space-y-2">
             <label className="block text-sm font-bold text-slate-800 flex items-center gap-1.5">
               <LinkIcon className="w-4 h-4 text-blue-600" />
-              <span>구글 웹앱 URL (자동 백그라운드 구글 시트 연동)</span>
+              <span>선생님 구글 웹앱 URL (배포된 Apps Script 주소)</span>
             </label>
-            <input
-              type="text"
-              value={gasUrlInput}
-              onChange={(e) => setGasUrlInput(e.target.value)}
-              placeholder="https://script.google.com/macros/s/.../exec"
-              className="w-full px-4 py-3 border border-slate-300 rounded-xl text-xs sm:text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 text-slate-900"
-            />
-            <div className="bg-blue-50/70 border border-blue-100 p-3.5 rounded-xl text-xs text-blue-900 leading-relaxed space-y-1">
-              <p className="font-extrabold text-blue-950">💡 구글 시트 연동 핵심 이점:</p>
-              <p>• 여기에 선생님의 구글 웹앱 URL을 1번만 등록하면, 학생은 웹앱 주소를 모르거나 치지 않아도 <strong>게임 완료 즉시 선생님 구글 시트로 백그라운드 자동 전송</strong>됩니다.</p>
-              <p>• 웹앱 URL이 설정되어 있지 않더라도, 모든 성적은 앱 내 데이터베이스에 안전하게 자동 저장되므로 언제든 Excel/CSV로 다운로드하실 수 있습니다.</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={gasUrlInput}
+                onChange={(e) => setGasUrlInput(e.target.value)}
+                placeholder="https://script.google.com/macros/s/.../exec"
+                className="flex-1 px-4 py-3 border border-slate-300 rounded-xl text-xs sm:text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 text-slate-900"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  onRefreshData();
+                  alert('구글 시트에서 최신 학생 학습 데이터를 다시 동기화합니다.');
+                }}
+                className="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-xs rounded-xl transition shrink-0"
+              >
+                데이터 가져오기
+              </button>
             </div>
+            <div className="bg-blue-50/70 border border-blue-100 p-3.5 rounded-xl text-xs text-blue-900 leading-relaxed space-y-1.5">
+              <p className="font-extrabold text-blue-950">💡 구글 시트 연동 핵심 원리:</p>
+              <p>• 학생들은 URL을 직접 입력할 필요가 없으며, 게임 완료 즉시 선생님 스프레드시트로 자동 전송됩니다.</p>
+              <p>• 구글 시트에 저장된 데이터를 웹 대시보드(통계, 오답노트, 리포트)로 불러오려면 아래의 <strong>스프레드시트 Apps Script 코드</strong>를 배포해 두시면 됩니다.</p>
+            </div>
+          </div>
+
+          {/* Google Apps Script Code Copy Block */}
+          <div className="space-y-3 pt-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>구글 스프레드시트 Apps Script 코드 (doGet + doPost)</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  const code = `function doGet(e) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) {
+    return ContentService.createTextOutput(JSON.stringify({ success: true, logs: [] }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  
+  var logs = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    if (!row[1]) continue;
+    logs.push({
+      id: 'gas_' + i + '_' + (row[0] || ''),
+      timestamp: row[0] ? new Date(row[0]).toISOString() : new Date().toISOString(),
+      studentName: String(row[1] || '익명'),
+      gradeClass: String(row[2] || ''),
+      pages: row[3] ? String(row[3]).split(', ') : ['기본'],
+      score: Number(row[4]) || 0,
+      timeElapsed: typeof row[5] === 'number' ? row[5] : (parseInt(row[5]) || 0),
+      accuracy: typeof row[6] === 'number' ? row[6] : (parseInt(String(row[6]).replace('%','')) || 100),
+      status: String(row[7] || '완료'),
+      wrongWordsText: String(row[8] || '')
+    });
+  }
+  
+  return ContentService.createTextOutput(JSON.stringify({ success: true, logs: logs }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var data = JSON.parse(e.postData.contents);
+  
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(["일시", "학생이름", "학년반번호", "학습단원", "점수", "소요시간(초)", "정확도(%)", "상태", "오답어휘"]);
+  }
+  
+  var timestamp = new Date();
+  var name = data.studentName || data.name || "익명";
+  var gradeClass = data.gradeClass || data.cls || "";
+  var page = data.page || data.pages || "";
+  var score = data.score !== undefined ? data.score : 0;
+  var timeElapsed = data.timeElapsedSeconds || data.timeElapsed || 0;
+  var accuracy = data.accuracy || "100%";
+  var status = data.status || "완료";
+  var wrongWords = data.wrongWords || "";
+  
+  sheet.appendRow([timestamp, name, gradeClass, page, score, timeElapsed, accuracy, status, wrongWords]);
+  
+  return ContentService.createTextOutput(JSON.stringify({ result: "success" }))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+                  navigator.clipboard.writeText(code);
+                  alert('구글 앱스 스크립트(Apps Script) 코드가 클립보드에 복사되었습니다!\n\n구글 스프레드시트 -> [확장 프로그램] -> [Apps Script]의 Code.gs에 붙여넣고 [배포] -> [새 배포](액세스: 모든 사용자)를 진행해주세요.');
+                }}
+                className="text-xs font-bold px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-lg transition"
+              >
+                📋 앱스 스크립트 코드 복사하기
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              구글 시트 메뉴의 <strong>[확장 프로그램] ➔ [Apps Script]</strong>에 위 코드를 붙여넣고 <strong>[배포 ➔ 새 배포 ➔ 웹 앱(액세스 권한: 모든 사용자)]</strong>로 배포한 URL을 위에 넣어주시면 모든 데이터가 실시간으로 웹과 완벽히 연동됩니다.
+            </p>
           </div>
 
           {/* Teacher Password PIN Setting */}
@@ -951,7 +1048,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
               className="w-48 px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-bold tracking-widest outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-slate-900"
             />
             <p className="text-xs text-slate-500">
-              * 학생들이 개별 성적 및 단어장 관리에 접근하지 못하도록 보호하는 비밀번호입니다. 선생님만의 새로운 비밀번호로 변경하여 저장하실 수 있습니다.
+              * 학생들이 개별 성적 및 단어장 관리에 접근하지 못하도록 보호하는 비밀번호입니다.
             </p>
           </div>
 

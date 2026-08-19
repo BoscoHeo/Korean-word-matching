@@ -67,15 +67,107 @@ export default function App() {
       .catch((err) => console.error('Failed to load words:', err));
   };
 
-  const loadLearningLogs = () => {
-    fetch('/api/learning-logs')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && data.logs) {
+  const parseWrongWordsString = (text: string): WrongWordRecord[] => {
+    if (!text || typeof text !== 'string') return [];
+    const items = text.split(',').map((s) => s.trim()).filter(Boolean);
+    return items.map((item) => {
+      const match = item.match(/^([^(]+)(?:\((.*)\))?$/);
+      if (match) {
+        return {
+          word: match[1].trim(),
+          def: match[2]?.trim() || '',
+          wrongMatchesCount: 1
+        };
+      }
+      return {
+        word: item,
+        def: '',
+        wrongMatchesCount: 1
+      };
+    });
+  };
+
+  const loadLearningLogs = async () => {
+    let localLogs: LearningLog[] = [];
+    try {
+      const savedBackup = localStorage.getItem('all_learning_logs_backup');
+      if (savedBackup) {
+        localLogs = JSON.parse(savedBackup);
+      }
+    } catch {
+      // ignore
+    }
+
+    // 1. Try Express API first
+    try {
+      const res = await fetch('/api/learning-logs');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.logs) && data.logs.length > 0) {
           setLogs(data.logs);
+          return;
         }
-      })
-      .catch((err) => console.error('Failed to load logs:', err));
+      }
+    } catch {
+      // Netlify / static environment fallback
+    }
+
+    // 2. Try Google Apps Script direct fetch
+    const currentGasUrl = localStorage.getItem('teacher_gas_url') || DEFAULT_GAS_URL;
+    if (currentGasUrl) {
+      try {
+        const gasRes = await fetch(currentGasUrl);
+        if (gasRes.ok) {
+          const gasData = await gasRes.json();
+          if (gasData.success && Array.isArray(gasData.logs)) {
+            const parsedGasLogs: LearningLog[] = gasData.logs.map((row: any, idx: number) => {
+              const accuracyNum = typeof row.accuracy === 'number'
+                ? row.accuracy
+                : parseInt(String(row.accuracy).replace('%', '')) || 100;
+              const timeSec = typeof row.timeElapsed === 'number'
+                ? row.timeElapsed
+                : (parseInt(String(row.timeElapsed).replace('초', '')) || 0);
+              const scoreNum = Number(row.score) || 0;
+              const pagesArr = Array.isArray(row.pages)
+                ? row.pages
+                : (row.page ? String(row.page).split(', ') : ['기본']);
+              const wrongList = row.wrongWords && Array.isArray(row.wrongWords)
+                ? row.wrongWords
+                : parseWrongWordsString(row.wrongWords || row.wrongWordsText || '');
+
+              return {
+                id: row.id || `gas_log_${idx}_${Date.now()}`,
+                studentName: row.studentName || row.name || '익명 학생',
+                gradeClass: row.gradeClass || row.cls || '',
+                pages: pagesArr,
+                score: scoreNum,
+                timeElapsed: timeSec,
+                accuracy: accuracyNum,
+                wrongWords: wrongList,
+                wrongAttemptsCount: wrongList.length,
+                timestamp: row.timestamp || new Date().toISOString(),
+                mode: row.status || 'standard'
+              };
+            });
+
+            if (parsedGasLogs.length > 0) {
+              // Merge with local logs if any
+              const combined = [...parsedGasLogs];
+              setLogs(combined);
+              localStorage.setItem('all_learning_logs_backup', JSON.stringify(combined));
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        console.log('Google Apps Script fetch notice:', err);
+      }
+    }
+
+    // Fallback to local logs
+    if (localLogs.length > 0) {
+      setLogs(localLogs);
+    }
   };
 
   const handleStartGame = (
