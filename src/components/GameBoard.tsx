@@ -3,6 +3,7 @@ import { GameCard, WordItem, WrongWordRecord } from '../types';
 import { soundManager } from '../utils/sound';
 import { Timer, Award, CheckCircle2, Lightbulb, Flame, AlertCircle, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { DEFAULT_GAS_URL } from '../constants';
 
 interface GameBoardProps {
   studentName: string;
@@ -152,8 +153,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
       }
 
       // Direct Google Sheets Apps Script Fallback for static hosts (Netlify)
-      const gasUrl = localStorage.getItem('teacher_gas_url') ||
-        'https://script.google.com/macros/s/AKfyeby7y17aCdMPi_NP6rWI4YXFuckniJLS2H620q0nXw0CEYsejHMTJYn-eFc_dnSruDvS/exec';
+      const gasUrl = localStorage.getItem('teacher_gas_url') || DEFAULT_GAS_URL;
       if (gasUrl) {
         const isPartial = cur.completedWordsCount < cur.totalWordsCount;
         const progressText = isPartial 
@@ -166,8 +166,12 @@ export const GameBoard: React.FC<GameBoardProps> = ({
           page: `${(cur.selectedPages || []).join(', ')} ${progressText}`,
           score: cur.score,
           timeElapsedSeconds: cur.timeElapsed,
+          timeElapsed: `${cur.timeElapsed}초`,
+          elapsedTime: `${cur.timeElapsed}초`,
+          remainingTime: `${cur.timeElapsed}초`,
           accuracy: `${accuracy}%`,
-          status: isPartial ? 'standard (중단)' : 'standard'
+          status: isPartial ? 'standard (중단)' : 'standard',
+          wrongWords: wrongWordsList.map((w) => `${w.word}(${w.def})`).join(', ')
         };
 
         try {
@@ -338,16 +342,24 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         sendLiveSessionUpdate(false, { totalWrongAttempts: newWrong });
 
         // Record wrong word for wrong answer note
-        const targetWordObj = currentRoundWords.find((w) => w.word === card1.wordId || w.word === card2.wordId);
-        if (targetWordObj) {
-          setWrongWordMap((prev) => ({
-            ...prev,
-            [targetWordObj.word]: {
-              def: targetWordObj.def,
-              count: (prev[targetWordObj.word]?.count || 0) + 1
-            }
-          }));
-        }
+        const word1Obj = currentRoundWords.find((w) => w.word === card1.wordId);
+        const word2Obj = currentRoundWords.find((w) => w.word === card2.wordId);
+        setWrongWordMap((prev) => {
+          const next = { ...prev };
+          if (word1Obj) {
+            next[word1Obj.word] = {
+              def: word1Obj.def,
+              count: (next[word1Obj.word]?.count || 0) + 1
+            };
+          }
+          if (word2Obj && word2Obj.word !== word1Obj?.word) {
+            next[word2Obj.word] = {
+              def: word2Obj.def,
+              count: (next[word2Obj.word]?.count || 0) + 1
+            };
+          }
+          return next;
+        });
 
         // Shake animation
         setShakingCards([card1.cardId, card2.cardId]);
@@ -409,8 +421,10 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     setHintActive(true);
     setSelectedCards(matchingPair);
 
-    // Deduct 20 points penalty for hint
-    setScore((prev) => Math.max(0, prev - 20));
+    // Deduct 50 points penalty for hint (half of standard 100pt match reward)
+    const newScore = Math.max(0, score - 50);
+    setScore(newScore);
+    sendLiveSessionUpdate(false, { score: newScore });
 
     setTimeout(() => {
       setSelectedCards([]);
@@ -481,11 +495,11 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         <div className="flex items-center gap-2">
           <button
             onClick={handleUseHint}
-            disabled={hintActive || score < 20}
+            disabled={hintActive || score < 50}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
           >
             <Lightbulb className="w-4 h-4 text-amber-600 fill-amber-400" />
-            <span>힌트 (-20점)</span>
+            <span>힌트 (-50점)</span>
           </button>
 
           <button

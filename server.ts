@@ -455,9 +455,13 @@ async function forwardToGoogleSheets(gasUrl: string, log: LearningLog) {
       page: `${log.pages.join(", ")} ${progressText}`,
       score: log.score,
       timeElapsedSeconds: log.timeElapsed,
+      timeElapsed: `${log.timeElapsed}초`,
+      elapsedTime: `${log.timeElapsed}초`,
+      remainingTime: `${log.timeElapsed}초`,
       accuracy: `${log.accuracy}%`,
       timestamp: log.timestamp,
-      status: log.mode || (isPartial ? "중단" : "완료")
+      status: log.mode || (isPartial ? "중단" : "완료"),
+      wrongWords: (log.wrongWords || []).map((w) => `${w.word}(${w.def})`).join(", ")
     };
 
     await fetch(gasUrl, {

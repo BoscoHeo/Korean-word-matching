@@ -139,16 +139,122 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     setTimeout(() => setSettingsSaveMsg(''), 5000);
   };
 
+  // Client-side analytics fallback calculation (for Netlify/static hosting)
+  const computeClassAnalyticsClientSide = (allLogs: LearningLog[]) => {
+    if (allLogs.length === 0) {
+      return {
+        totalStudents: 0,
+        totalGamesPlayed: 0,
+        classAverageAccuracy: 0,
+        totalStudyMinutes: 0,
+        topMissedWords: [],
+        dailyActivity: []
+      };
+    }
+
+    const totalStudents = new Set(allLogs.map((l) => l.studentName)).size;
+    const totalGamesPlayed = allLogs.length;
+    const classAverageAccuracy = Math.round(
+      allLogs.reduce((acc, l) => acc + l.accuracy, 0) / allLogs.length
+    );
+    const totalStudyMinutes = Math.round(
+      allLogs.reduce((acc, l) => acc + (l.timeElapsed || 0), 0) / 60
+    );
+
+    const missedMap: Record<string, { def: string; page: string; failCount: number }> = {};
+    allLogs.forEach((l) => {
+      (l.wrongWords || []).forEach((w) => {
+        if (!missedMap[w.word]) {
+          missedMap[w.word] = {
+            def: w.def,
+            page: (l.pages || []).join(', '),
+            failCount: 0
+          };
+        }
+        missedMap[w.word].failCount += w.wrongMatchesCount || 1;
+      });
+    });
+
+    const topMissedWords = Object.entries(missedMap)
+      .map(([word, val]) => ({
+        word,
+        def: val.def,
+        page: val.page,
+        failCount: val.failCount
+      }))
+      .sort((a, b) => b.failCount - a.failCount);
+
+    const dailyMap: Record<string, number> = {};
+    allLogs.forEach((l) => {
+      const dateStr = new Date(l.timestamp).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' });
+      dailyMap[dateStr] = (dailyMap[dateStr] || 0) + 1;
+    });
+
+    const dailyActivity = Object.entries(dailyMap).map(([date, gamesCount]) => ({ date, gamesCount }));
+
+    return {
+      totalStudents,
+      totalGamesPlayed,
+      classAverageAccuracy,
+      totalStudyMinutes,
+      topMissedWords,
+      dailyActivity
+    };
+  };
+
+  const computeStudentSummaryClientSide = (sName: string, allLogs: LearningLog[]) => {
+    const studentLogs = allLogs.filter((l) => l.studentName === sName);
+    if (studentLogs.length === 0) return null;
+
+    const totalGames = studentLogs.length;
+    const totalStudySeconds = studentLogs.reduce((acc, l) => acc + (l.timeElapsed || 0), 0);
+    const avgScore = Math.round(studentLogs.reduce((acc, l) => acc + l.score, 0) / totalGames);
+    const avgAccuracy = Math.round(studentLogs.reduce((acc, l) => acc + l.accuracy, 0) / totalGames);
+
+    const missedWordMap: Record<string, { def: string; failCount: number }> = {};
+    studentLogs.forEach((l) => {
+      (l.wrongWords || []).forEach((w) => {
+        if (!missedWordMap[w.word]) {
+          missedWordMap[w.word] = { def: w.def, failCount: 0 };
+        }
+        missedWordMap[w.word].failCount += w.wrongMatchesCount || 1;
+      });
+    });
+
+    const frequentlyMissedWords = Object.entries(missedWordMap)
+      .map(([word, val]) => ({ word, def: val.def, failCount: val.failCount }))
+      .sort((a, b) => b.failCount - a.failCount);
+
+    return {
+      studentName: sName,
+      gradeClass: studentLogs[0].gradeClass,
+      totalGames,
+      totalStudySeconds,
+      averageScore: avgScore,
+      averageAccuracy: avgAccuracy,
+      frequentlyMissedWords,
+      lastActive: studentLogs[0].timestamp,
+      history: studentLogs
+    };
+  };
+
   // Fetch Class Analytics
   useEffect(() => {
     fetch('/api/analytics/class')
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error('API error');
+        return res.json();
+      })
       .then((data) => {
-        if (data.success) {
+        if (data.success && data.analytics) {
           setClassAnalytics(data.analytics);
+        } else {
+          setClassAnalytics(computeClassAnalyticsClientSide(logs));
         }
       })
-      .catch((err) => console.error(err));
+      .catch(() => {
+        setClassAnalytics(computeClassAnalyticsClientSide(logs));
+      });
   }, [logs]);
 
   // Unique student list
@@ -165,13 +271,22 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   useEffect(() => {
     if (selectedStudent) {
       fetch(`/api/analytics/student/${encodeURIComponent(selectedStudent)}`)
-        .then((res) => res.json())
+        .then((res) => {
+          if (!res.ok) throw new Error('API error');
+          return res.json();
+        })
         .then((data) => {
-          if (data.success) {
+          if (data.success && data.summary) {
             setStudentSummary(data.summary);
+          } else {
+            setStudentSummary(computeStudentSummaryClientSide(selectedStudent, logs));
           }
         })
-        .catch((err) => console.error(err));
+        .catch(() => {
+          setStudentSummary(computeStudentSummaryClientSide(selectedStudent, logs));
+        });
+    } else {
+      setStudentSummary(null);
     }
   }, [selectedStudent, logs]);
 

@@ -257,8 +257,12 @@ export default function App() {
         page: `${selectedPages.join(', ')} ${progressText}`,
         score,
         timeElapsedSeconds: timeElapsed,
+        timeElapsed: `${timeElapsed}초`,
+        elapsedTime: `${timeElapsed}초`,
+        remainingTime: `${timeElapsed}초`,
         accuracy: `${accuracy}%`,
-        status: isPartial ? 'standard (중단)' : 'standard'
+        status: isPartial ? 'standard (중단)' : 'standard',
+        wrongWords: (wrongWords || []).map((w) => `${w.word}(${w.def})`).join(', ')
       };
 
       try {
