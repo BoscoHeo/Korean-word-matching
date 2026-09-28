@@ -7,7 +7,7 @@ import { INITIAL_VOCABULARY_DATA } from "./src/data/initialWords.js";
 import { LearningLog, TeacherSettings, LiveSession, WrongWordRecord } from "./src/types";
 
 export const app = express();
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || "3000", 10);
 
 // JSON body 크기 제한 (64KB) - DoS 방어 및 정상 학습 페이로드 충분한 수용
 app.use(express.json({ limit: "64kb" }));
@@ -164,13 +164,14 @@ setInterval(() => {
   }
 }, 60 * 1000);
 
-// Ensure data folder exists
-const DATA_DIR = path.join(process.cwd(), "data");
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+// Ensure data folder exists (support DATA_DIR or STORE_PATH env for persistent storage like Render Disk)
+const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
+const STORE_FILE = process.env.STORE_PATH || path.join(DATA_DIR, "learning_store.json");
 
-const STORE_FILE = path.join(DATA_DIR, "learning_store.json");
+const storeDir = path.dirname(STORE_FILE);
+if (!fs.existsSync(storeDir)) {
+  fs.mkdirSync(storeDir, { recursive: true });
+}
 
 interface DataStore {
   vocabulary: Record<string, { word: string; def: string; example?: string }[]>;
