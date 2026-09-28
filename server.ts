@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import { INITIAL_VOCABULARY_DATA } from "./src/data/initialWords.js";
 import { LearningLog, TeacherSettings, LiveSession, WrongWordRecord } from "./src/types";
+import { getRepository } from "./server/repository.js";
 
 export const app = express();
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -164,181 +165,52 @@ setInterval(() => {
   }
 }, 60 * 1000);
 
-// Ensure data folder exists (support DATA_DIR or STORE_PATH env for persistent storage like Render Disk)
-const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
-const STORE_FILE = process.env.STORE_PATH || path.join(DATA_DIR, "learning_store.json");
-
-const storeDir = path.dirname(STORE_FILE);
-if (!fs.existsSync(storeDir)) {
-  fs.mkdirSync(storeDir, { recursive: true });
-}
-
-interface DataStore {
-  vocabulary: Record<string, { word: string; def: string; example?: string }[]>;
-  logs: LearningLog[];
-  settings: TeacherSettings & { passcodeHash?: string };
-}
-
-function loadStore(): DataStore {
-  if (!fs.existsSync(STORE_FILE)) {
-    const defaultStore: DataStore = {
-      vocabulary: INITIAL_VOCABULARY_DATA,
-      logs: generateSampleLogs(),
-      settings: {
-        gasUrl: "",
-        autoSyncGoogleSheets: false
-      }
-    };
-    saveStore(defaultStore);
-    return defaultStore;
-  }
-  try {
-    const raw = fs.readFileSync(STORE_FILE, "utf-8");
-    const data = JSON.parse(raw);
-    if (!data.settings) {
-      const initialPin = process.env.TEACHER_INITIAL_PASSCODE || (process.env.NODE_ENV !== "production" ? "0000" : "");
-      data.settings = {
-        gasUrl: "https://script.google.com/macros/s/AKfycby7y17aCdMPi_NP6rWl4YXfUckniJLS2H620q0nXw0CEYSejHMTJYn-eFc_dnSruDvS/exec",
-        autoSyncGoogleSheets: true,
-        passcodeHash: initialPin ? hashPinSync(initialPin) : ""
-      };
-      saveStore(data);
-    } else {
-      let changed = false;
-      if (!data.settings.gasUrl) {
-        data.settings.gasUrl = "https://script.google.com/macros/s/AKfycby7y17aCdMPi_NP6rWl4YXfUckniJLS2H620q0nXw0CEYSejHMTJYn-eFc_dnSruDvS/exec";
-        data.settings.autoSyncGoogleSheets = true;
-        changed = true;
-      }
-      if (!data.settings.passcode && !data.settings.passcodeHash) {
-        const initialPin = process.env.TEACHER_INITIAL_PASSCODE || (process.env.NODE_ENV !== "production" ? "0000" : "");
-        if (initialPin) {
-          data.settings.passcodeHash = hashPinSync(initialPin);
-          changed = true;
-        }
-      }
-      if (changed) saveStore(data);
-    }
-    if (!data.vocabulary || Object.keys(data.vocabulary).length === 0) {
-      data.vocabulary = INITIAL_VOCABULARY_DATA;
-      saveStore(data);
-    } else {
-      let updated = false;
-      Object.keys(INITIAL_VOCABULARY_DATA).forEach((pageKey) => {
-        if (!data.vocabulary[pageKey] || data.vocabulary[pageKey].length < INITIAL_VOCABULARY_DATA[pageKey].length) {
-          data.vocabulary[pageKey] = INITIAL_VOCABULARY_DATA[pageKey];
-          updated = true;
-        }
-      });
-      if (updated) {
-        saveStore(data);
-      }
-    }
-    return data;
-  } catch (e) {
-    console.error("Error reading store file, using initial data:", e);
-    return {
-      vocabulary: INITIAL_VOCABULARY_DATA,
-      logs: [],
-      settings: {}
-    };
-  }
-}
-
-function saveStore(store: DataStore) {
-  try {
-    fs.writeFileSync(STORE_FILE, JSON.stringify(store, null, 2), "utf-8");
-  } catch (e) {
-    console.error("Error saving store file:", e);
-  }
-}
-
-// Generate realistic initial sample data so teachers can immediately test analytics
-function generateSampleLogs(): LearningLog[] {
-  const sampleStudents = [
-    { name: "홍길동", gradeClass: "6학년 1반 15번" },
-    { name: "김민준", gradeClass: "6학년 1반 03번" },
-    { name: "이서연", gradeClass: "6학년 1반 12번" },
-    { name: "박도현", gradeClass: "6학년 1반 08번" },
-    { name: "최수아", gradeClass: "6학년 1반 21번" }
-  ];
-
-  const now = Date.now();
-  const dayMs = 24 * 60 * 60 * 1000;
-  const sampleLogs: LearningLog[] = [];
-
-  sampleStudents.forEach((student, idx) => {
-    // 3 to 5 logs per student over past few days
-    const gameCount = 3 + (idx % 3);
-    for (let i = 0; i < gameCount; i++) {
-      const pageNum = (i % 3) + 1;
-      const pages = [`${pageNum}페이지`];
-      const timeElapsed = 45 + Math.floor(Math.random() * 60);
-      const score = 1000 + Math.floor(Math.random() * 400);
-      const wrongCount = Math.floor(Math.random() * 3);
-      const totalWords = 12;
-      const accuracy = Math.round(((totalWords - wrongCount) / totalWords) * 100);
-
-      const wrongWordsList = wrongCount > 0 ? [
-        { word: "추론", def: "알고 있는 사실을 바탕으로 다른 판단을 이끌어냄", wrongMatchesCount: 2 },
-        { word: "모순", def: "앞뒤가 서로 어긋남", wrongMatchesCount: 1 }
-      ].slice(0, wrongCount) : [];
-
-      sampleLogs.push({
-        id: `sample-${idx}-${i}-${Date.now()}`,
-        studentName: student.name,
-        gradeClass: student.gradeClass,
-        pages,
-        totalWords,
-        completedWords: totalWords,
-        score,
-        timeElapsed,
-        accuracy,
-        wrongAttemptsCount: wrongCount,
-        wrongWords: wrongWordsList,
-        timestamp: new Date(now - (gameCount - i) * dayMs - idx * 3600000).toISOString(),
-        mode: "standard"
-      });
-    }
-  });
-
-  return sampleLogs;
-}
+// Data storage is encapsulated in DataRepository (JsonRepository / FirestoreRepository)
 
 // REST API Endpoints
 
 // GET /api/words - fetch current word set pages (public for student gameplay)
-app.get("/api/words", (req, res) => {
-  const store = loadStore();
-  res.json({ success: true, pages: store.vocabulary });
+app.get("/api/words", async (req, res) => {
+  try {
+    const repo = await getRepository();
+    const pages = await repo.getVocabulary();
+    res.json({ success: true, pages });
+  } catch (err) {
+    console.error("Failed to load vocabulary:", err);
+    res.status(500).json({ success: false, message: "단어 데이터를 불러오는데 실패했습니다." });
+  }
 });
 
 // POST /api/words - add or update custom page (teacher only)
-app.post("/api/words", requireTeacherAuth, (req, res) => {
+app.post("/api/words", requireTeacherAuth, async (req, res) => {
   const { pageName, words } = req.body;
   if (!pageName || !Array.isArray(words)) {
     return res.status(400).json({ success: false, message: "Invalid payload" });
   }
-  const store = loadStore();
-  store.vocabulary[pageName] = words;
-  saveStore(store);
-  res.json({ success: true, message: "단어 페이지가 저장되었습니다.", pages: store.vocabulary });
+  try {
+    const repo = await getRepository();
+    const pages = await repo.saveVocabularyPage(pageName, words);
+    res.json({ success: true, message: "단어 페이지가 저장되었습니다.", pages });
+  } catch (err) {
+    console.error("Failed to save vocabulary page:", err);
+    res.status(500).json({ success: false, message: "단어 페이지 저장에 실패했습니다." });
+  }
 });
 
 // GET /api/learning-logs (teacher only - contains student PII and scores)
-app.get("/api/learning-logs", requireTeacherAuth, (req, res) => {
-  const store = loadStore();
+app.get("/api/learning-logs", requireTeacherAuth, async (req, res) => {
   const { studentName, gradeClass } = req.query;
-  let filtered = store.logs;
-
-  if (studentName) {
-    filtered = filtered.filter(l => l.studentName.toLowerCase().includes(String(studentName).toLowerCase()));
+  try {
+    const repo = await getRepository();
+    const logs = await repo.getLearningLogs({
+      studentName: studentName ? String(studentName) : undefined,
+      gradeClass: gradeClass ? String(gradeClass) : undefined
+    });
+    res.json({ success: true, logs });
+  } catch (err) {
+    console.error("Failed to load learning logs:", err);
+    res.status(500).json({ success: false, message: "학습 기록을 불러오는데 실패했습니다." });
   }
-  if (gradeClass) {
-    filtered = filtered.filter(l => l.gradeClass.toLowerCase().includes(String(gradeClass).toLowerCase()));
-  }
-
-  res.json({ success: true, logs: filtered });
 });
 
 // Input validation helpers for public student endpoints
@@ -497,7 +369,7 @@ export function validateAndSanitizeLearningLog(body: any): { valid: boolean; err
 }
 
 // POST /api/learning-logs - save a new game result (public for student submission, strict validation)
-app.post("/api/learning-logs", (req, res) => {
+app.post("/api/learning-logs", async (req, res) => {
   let logPayload = req.body;
   if (typeof logPayload === "string") {
     try {
@@ -512,149 +384,159 @@ app.post("/api/learning-logs", (req, res) => {
     return res.status(400).json({ success: false, message: validation.error || "입력 검증에 실패했습니다." });
   }
 
-  const store = loadStore();
-  // Sanitize: req.body 전체 spread 금지, 검증된 순수 데이터만 추출하여 저장
-  const newLog: LearningLog = {
-    ...validation.data,
-    id: `log_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`
-  };
+  try {
+    const repo = await getRepository();
+    // Sanitize: req.body 전체 spread 금지, 검증된 순수 데이터만 추출하여 저장
+    const newLog = await repo.addLearningLog(validation.data);
 
-  store.logs.unshift(newLog); // 최신순 저장
-  saveStore(store);
+    // If Google Sheets URL configured, attempt sync
+    const settings = await repo.getSettings();
+    if (settings.gasUrl) {
+      forwardToGoogleSheets(settings.gasUrl, newLog).catch(err => {
+        console.warn("Failed auto sync to Google Sheets:", err);
+      });
+    }
 
-  // If Google Sheets URL configured, attempt sync
-  if (store.settings.gasUrl) {
-    forwardToGoogleSheets(store.settings.gasUrl, newLog).catch(err => {
-      console.warn("Failed auto sync to Google Sheets:", err);
-    });
+    res.json({ success: true, log: newLog });
+  } catch (err) {
+    console.error("Failed to save learning log:", err);
+    res.status(500).json({ success: false, message: "학습 기록 저장에 실패했습니다." });
   }
-
-  res.json({ success: true, log: newLog });
 });
 
 // GET /api/analytics/student/:name (teacher only)
-app.get("/api/analytics/student/:name", requireTeacherAuth, (req, res) => {
+app.get("/api/analytics/student/:name", requireTeacherAuth, async (req, res) => {
   const name = req.params.name;
-  const store = loadStore();
-  const studentLogs = store.logs.filter(l => l.studentName === name);
+  try {
+    const repo = await getRepository();
+    const studentLogs = await repo.getLearningLogs({ studentName: name });
 
-  if (studentLogs.length === 0) {
-    return res.json({
-      success: true,
-      summary: null,
-      message: "해당 학생의 학습 기록이 없습니다."
+    if (studentLogs.length === 0) {
+      return res.json({
+        success: true,
+        summary: null,
+        message: "해당 학생의 학습 기록이 없습니다."
+      });
+    }
+
+    const totalGames = studentLogs.length;
+    const totalStudySeconds = studentLogs.reduce((acc, l) => acc + (l.timeElapsed || 0), 0);
+    const avgScore = Math.round(studentLogs.reduce((acc, l) => acc + l.score, 0) / totalGames);
+    const avgAccuracy = Math.round(studentLogs.reduce((acc, l) => acc + l.accuracy, 0) / totalGames);
+
+    // Aggregate missed words
+    const missedWordMap: Record<string, { def: string; failCount: number }> = {};
+    studentLogs.forEach(l => {
+      (l.wrongWords || []).forEach(w => {
+        if (!missedWordMap[w.word]) {
+          missedWordMap[w.word] = { def: w.def, failCount: 0 };
+        }
+        missedWordMap[w.word].failCount += (w.wrongMatchesCount || 1);
+      });
     });
+
+    const frequentlyMissedWords = Object.entries(missedWordMap)
+      .map(([word, val]) => ({ word, def: val.def, failCount: val.failCount }))
+      .sort((a, b) => b.failCount - a.failCount);
+
+    const summary = {
+      studentName: name,
+      gradeClass: studentLogs[0].gradeClass,
+      totalGames,
+      totalStudySeconds,
+      averageScore: avgScore,
+      averageAccuracy: avgAccuracy,
+      frequentlyMissedWords,
+      lastActive: studentLogs[0].timestamp,
+      history: studentLogs
+    };
+
+    res.json({ success: true, summary });
+  } catch (err) {
+    console.error("Failed to load student analytics:", err);
+    res.status(500).json({ success: false, message: "학생 분석 데이터를 불러오는데 실패했습니다." });
   }
-
-  const totalGames = studentLogs.length;
-  const totalStudySeconds = studentLogs.reduce((acc, l) => acc + (l.timeElapsed || 0), 0);
-  const avgScore = Math.round(studentLogs.reduce((acc, l) => acc + l.score, 0) / totalGames);
-  const avgAccuracy = Math.round(studentLogs.reduce((acc, l) => acc + l.accuracy, 0) / totalGames);
-
-  // Aggregate missed words
-  const missedWordMap: Record<string, { def: string; failCount: number }> = {};
-  studentLogs.forEach(l => {
-    (l.wrongWords || []).forEach(w => {
-      if (!missedWordMap[w.word]) {
-        missedWordMap[w.word] = { def: w.def, failCount: 0 };
-      }
-      missedWordMap[w.word].failCount += (w.wrongMatchesCount || 1);
-    });
-  });
-
-  const frequentlyMissedWords = Object.entries(missedWordMap)
-    .map(([word, val]) => ({ word, def: val.def, failCount: val.failCount }))
-    .sort((a, b) => b.failCount - a.failCount);
-
-  const summary = {
-    studentName: name,
-    gradeClass: studentLogs[0].gradeClass,
-    totalGames,
-    totalStudySeconds,
-    averageScore: avgScore,
-    averageAccuracy: avgAccuracy,
-    frequentlyMissedWords,
-    lastActive: studentLogs[0].timestamp,
-    history: studentLogs
-  };
-
-  res.json({ success: true, summary });
 });
 
 // GET /api/analytics/class (teacher only)
-app.get("/api/analytics/class", requireTeacherAuth, (req, res) => {
-  const store = loadStore();
-  const logs = store.logs;
+app.get("/api/analytics/class", requireTeacherAuth, async (req, res) => {
+  try {
+    const repo = await getRepository();
+    const logs = await repo.getLearningLogs();
 
-  if (logs.length === 0) {
-    return res.json({
+    if (logs.length === 0) {
+      return res.json({
+        success: true,
+        analytics: {
+          totalStudents: 0,
+          totalGamesPlayed: 0,
+          classAverageAccuracy: 0,
+          totalStudyMinutes: 0,
+          topMissedWords: [],
+          dailyActivity: []
+        }
+      });
+    }
+
+    const uniqueStudents = new Set(logs.map(l => l.studentName)).size;
+    const totalGamesPlayed = logs.length;
+    const classAvgAccuracy = Math.round(logs.reduce((acc, l) => acc + l.accuracy, 0) / logs.length);
+    const totalStudyMinutes = Math.round(logs.reduce((acc, l) => acc + (l.timeElapsed || 0), 0) / 60);
+
+    // Aggregated missed words across class
+    const classMissedMap: Record<string, { def: string; failCount: number; pages: Set<string> }> = {};
+    logs.forEach(l => {
+      (l.wrongWords || []).forEach(w => {
+        if (!classMissedMap[w.word]) {
+          classMissedMap[w.word] = { def: w.def, failCount: 0, pages: new Set(l.pages) };
+        }
+        classMissedMap[w.word].failCount += (w.wrongMatchesCount || 1);
+        (l.pages || []).forEach(p => classMissedMap[w.word].pages.add(p));
+      });
+    });
+
+    const topMissedWords = Object.entries(classMissedMap)
+      .map(([word, val]) => ({
+        word,
+        def: val.def,
+        failCount: val.failCount,
+        page: Array.from(val.pages).join(", ")
+      }))
+      .sort((a, b) => b.failCount - a.failCount)
+      .slice(0, 10);
+
+    // Daily activity map for recent 7 days
+    const dateMap: Record<string, { count: number; totalScore: number }> = {};
+    logs.forEach(l => {
+      const d = new Date(l.timestamp).toLocaleDateString("ko-KR", { month: "short", day: "numeric" });
+      if (!dateMap[d]) {
+        dateMap[d] = { count: 0, totalScore: 0 };
+      }
+      dateMap[d].count += 1;
+      dateMap[d].totalScore += l.score;
+    });
+
+    const dailyActivity = Object.entries(dateMap).map(([date, val]) => ({
+      date,
+      gamesCount: val.count,
+      avgScore: Math.round(val.totalScore / val.count)
+    })).slice(-7);
+
+    res.json({
       success: true,
       analytics: {
-        totalStudents: 0,
-        totalGamesPlayed: 0,
-        classAverageAccuracy: 0,
-        totalStudyMinutes: 0,
-        topMissedWords: [],
-        dailyActivity: []
+        totalStudents: uniqueStudents,
+        totalGamesPlayed,
+        classAverageAccuracy: classAvgAccuracy,
+        totalStudyMinutes,
+        topMissedWords,
+        dailyActivity
       }
     });
+  } catch (err) {
+    console.error("Failed to load class analytics:", err);
+    res.status(500).json({ success: false, message: "학급 통계 데이터를 불러오는데 실패했습니다." });
   }
-
-  const uniqueStudents = new Set(logs.map(l => l.studentName)).size;
-  const totalGamesPlayed = logs.length;
-  const classAvgAccuracy = Math.round(logs.reduce((acc, l) => acc + l.accuracy, 0) / logs.length);
-  const totalStudyMinutes = Math.round(logs.reduce((acc, l) => acc + (l.timeElapsed || 0), 0) / 60);
-
-  // Aggregated missed words across class
-  const classMissedMap: Record<string, { def: string; failCount: number; pages: Set<string> }> = {};
-  logs.forEach(l => {
-    (l.wrongWords || []).forEach(w => {
-      if (!classMissedMap[w.word]) {
-        classMissedMap[w.word] = { def: w.def, failCount: 0, pages: new Set(l.pages) };
-      }
-      classMissedMap[w.word].failCount += (w.wrongMatchesCount || 1);
-      (l.pages || []).forEach(p => classMissedMap[w.word].pages.add(p));
-    });
-  });
-
-  const topMissedWords = Object.entries(classMissedMap)
-    .map(([word, val]) => ({
-      word,
-      def: val.def,
-      failCount: val.failCount,
-      page: Array.from(val.pages).join(", ")
-    }))
-    .sort((a, b) => b.failCount - a.failCount)
-    .slice(0, 10);
-
-  // Daily activity map for recent 7 days
-  const dateMap: Record<string, { count: number; totalScore: number }> = {};
-  logs.forEach(l => {
-    const d = new Date(l.timestamp).toLocaleDateString("ko-KR", { month: "short", day: "numeric" });
-    if (!dateMap[d]) {
-      dateMap[d] = { count: 0, totalScore: 0 };
-    }
-    dateMap[d].count += 1;
-    dateMap[d].totalScore += l.score;
-  });
-
-  const dailyActivity = Object.entries(dateMap).map(([date, val]) => ({
-    date,
-    gamesCount: val.count,
-    avgScore: Math.round(val.totalScore / val.count)
-  })).slice(-7);
-
-  res.json({
-    success: true,
-    analytics: {
-      totalStudents: uniqueStudents,
-      totalGamesPlayed,
-      classAverageAccuracy: classAvgAccuracy,
-      totalStudyMinutes,
-      topMissedWords,
-      dailyActivity
-    }
-  });
 });
 
 // LiveSession validation helper
@@ -784,78 +666,91 @@ app.post("/api/verify-pin", async (req, res) => {
     return res.status(401).json({ success: false, message: "선생님 비밀번호(PIN)가 올바르지 않습니다." });
   }
 
-  const store = loadStore();
-  const stored = store.settings?.passcodeHash || store.settings?.passcode || "";
+  try {
+    const repo = await getRepository();
+    const settings = await repo.getSettings();
+    const stored = settings?.passcodeHash || (settings as any)?.passcode || "";
 
-  const isValid = await verifyPin(pin.trim(), stored);
-  if (!isValid) {
-    recordPinFailure(clientIp);
-    return res.status(401).json({ success: false, message: "선생님 비밀번호(PIN)가 올바르지 않습니다." });
-  }
-
-  // Success: Clear rate limit failure record for this IP
-  clearPinRateLimit(clientIp);
-
-  // Progressive migration: If stored PIN was plaintext, upgrade to scrypt hash immediately
-  if (store.settings?.passcode && !store.settings?.passcodeHash) {
-    try {
-      const hashed = await hashPin(pin.trim());
-      store.settings.passcodeHash = hashed;
-      delete store.settings.passcode;
-      saveStore(store);
-    } catch (e) {
-      console.error("Failed to migrate legacy PIN to hash:", e);
+    const isValid = await verifyPin(pin.trim(), stored);
+    if (!isValid) {
+      recordPinFailure(clientIp);
+      return res.status(401).json({ success: false, message: "선생님 비밀번호(PIN)가 올바르지 않습니다." });
     }
-  }
 
-  const token = createTeacherSession();
-  res.json({
-    success: true,
-    token,
-    expiresIn: SESSION_TTL_MS,
-    message: "선생님 인증에 성공했습니다."
-  });
+    // Success: Clear rate limit failure record for this IP
+    clearPinRateLimit(clientIp);
+
+    // Progressive migration: If stored PIN was plaintext, upgrade to scrypt hash immediately
+    if ((settings as any)?.passcode && !settings?.passcodeHash) {
+      try {
+        const hashed = await hashPin(pin.trim());
+        await repo.updateSettings({ passcodeHash: hashed });
+      } catch (e) {
+        console.error("Failed to migrate legacy PIN to hash:", e);
+      }
+    }
+
+    const token = createTeacherSession();
+    res.json({
+      success: true,
+      token,
+      expiresIn: SESSION_TTL_MS,
+      message: "선생님 인증에 성공했습니다."
+    });
+  } catch (err) {
+    console.error("PIN verification error:", err);
+    res.status(500).json({ success: false, message: "인증 처리 중 오류가 발생했습니다." });
+  }
 });
 
 // GET /api/settings & POST /api/settings (teacher only)
-app.get("/api/settings", requireTeacherAuth, (req, res) => {
-  const store = loadStore();
-  // Never expose passcode or passcodeHash to client
-  res.json({
-    success: true,
-    settings: {
-      gasUrl: store.settings?.gasUrl || "",
-      autoSyncGoogleSheets: store.settings?.autoSyncGoogleSheets ?? true
-    }
-  });
+app.get("/api/settings", requireTeacherAuth, async (req, res) => {
+  try {
+    const repo = await getRepository();
+    const settings = await repo.getSettings();
+    // Never expose passcode or passcodeHash to client
+    res.json({
+      success: true,
+      settings: {
+        gasUrl: settings.gasUrl || "",
+        autoSyncGoogleSheets: settings.autoSyncGoogleSheets ?? true
+      }
+    });
+  } catch (err) {
+    console.error("Failed to load settings:", err);
+    res.status(500).json({ success: false, message: "환경설정을 불러오는데 실패했습니다." });
+  }
 });
 
 app.post("/api/settings", requireTeacherAuth, async (req, res) => {
-  const { gasUrl, autoSyncGoogleSheets, passcode } = req.body;
-  const store = loadStore();
+  try {
+    const { gasUrl, autoSyncGoogleSheets, passcode } = req.body;
+    const repo = await getRepository();
+    const current = await repo.getSettings();
 
-  let newPasscodeHash = store.settings?.passcodeHash;
-  if (passcode && typeof passcode === "string" && passcode.trim()) {
-    newPasscodeHash = await hashPin(passcode.trim());
+    let newPasscodeHash = current.passcodeHash;
+    if (passcode && typeof passcode === "string" && passcode.trim()) {
+      newPasscodeHash = await hashPin(passcode.trim());
+    }
+
+    const updated = await repo.updateSettings({
+      gasUrl: gasUrl !== undefined ? gasUrl : current.gasUrl,
+      autoSyncGoogleSheets: autoSyncGoogleSheets !== undefined ? autoSyncGoogleSheets : current.autoSyncGoogleSheets,
+      passcodeHash: newPasscodeHash
+    });
+
+    res.json({
+      success: true,
+      settings: {
+        gasUrl: updated.gasUrl || "",
+        autoSyncGoogleSheets: updated.autoSyncGoogleSheets ?? true
+      },
+      message: "선생님 환경설정이 저장되었습니다."
+    });
+  } catch (err) {
+    console.error("Failed to update settings:", err);
+    res.status(500).json({ success: false, message: "환경설정 저장에 실패했습니다." });
   }
-
-  store.settings = {
-    gasUrl: gasUrl !== undefined ? gasUrl : store.settings?.gasUrl,
-    autoSyncGoogleSheets: autoSyncGoogleSheets !== undefined ? autoSyncGoogleSheets : store.settings?.autoSyncGoogleSheets,
-    passcodeHash: newPasscodeHash
-  };
-  // Ensure legacy plaintext passcode is removed
-  delete store.settings.passcode;
-
-  saveStore(store);
-  res.json({
-    success: true,
-    settings: {
-      gasUrl: store.settings.gasUrl,
-      autoSyncGoogleSheets: store.settings.autoSyncGoogleSheets
-    },
-    message: "선생님 환경설정이 저장되었습니다."
-  });
 });
 
 // GET /api/teacher/session-check (SEC-1 verification endpoint)
@@ -864,19 +759,27 @@ app.get("/api/teacher/session-check", requireTeacherAuth, (req, res) => {
 });
 
 // POST /api/reset-data (teacher only)
-app.post("/api/reset-data", requireTeacherAuth, (req, res) => {
-  const store = loadStore();
-  store.logs = generateSampleLogs();
-  saveStore(store);
-  res.json({ success: true, message: "학습 데이터가 초기화되었습니다." });
+app.post("/api/reset-data", requireTeacherAuth, async (req, res) => {
+  try {
+    const repo = await getRepository();
+    await repo.clearLearningLogs(true);
+    res.json({ success: true, message: "학습 데이터가 초기화되었습니다." });
+  } catch (err) {
+    console.error("Failed to reset data:", err);
+    res.status(500).json({ success: false, message: "학습 데이터 초기화에 실패했습니다." });
+  }
 });
 
 // POST /api/reset-words (teacher only)
-app.post("/api/reset-words", requireTeacherAuth, (req, res) => {
-  const store = loadStore();
-  store.vocabulary = INITIAL_VOCABULARY_DATA;
-  saveStore(store);
-  res.json({ success: true, message: "기본 어휘 데이터(1~13페이지)로 초기화되었습니다.", pages: store.vocabulary });
+app.post("/api/reset-words", requireTeacherAuth, async (req, res) => {
+  try {
+    const repo = await getRepository();
+    const resetVocab = await repo.resetVocabulary();
+    res.json({ success: true, message: "기본 어휘 데이터(1~13페이지)로 초기화되었습니다.", pages: resetVocab });
+  } catch (err) {
+    console.error("Failed to reset words:", err);
+    res.status(500).json({ success: false, message: "기본 어휘 데이터 초기화에 실패했습니다." });
+  }
 });
 
 async function forwardToGoogleSheets(gasUrl: string, log: LearningLog) {
