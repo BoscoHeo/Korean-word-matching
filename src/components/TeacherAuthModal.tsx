@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { Lock, KeyRound, AlertCircle, CheckCircle2, X } from 'lucide-react';
-import { DEFAULT_PASSCODE } from '../constants';
 
 interface TeacherAuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (token: string) => void;
 }
 
 export const TeacherAuthModal: React.FC<TeacherAuthModalProps> = ({
@@ -37,28 +36,14 @@ export const TeacherAuthModal: React.FC<TeacherAuthModalProps> = ({
       });
       const data = await res.json();
 
-      if (data.success) {
+      if (res.ok && data.success && data.token) {
         setPin('');
-        onSuccess();
+        onSuccess(data.token);
       } else {
-        // Fallback to local check if server returns failure in client static deployment
-        const localPasscode = localStorage.getItem('teacher_passcode') || DEFAULT_PASSCODE;
-        if (pin.trim() === localPasscode || pin.trim() === DEFAULT_PASSCODE || pin.trim() === '130707') {
-          setPin('');
-          onSuccess();
-        } else {
-          setErrorMsg(data.message || '비밀번호가 올바르지 않습니다.');
-        }
+        setErrorMsg(data.message || '비밀번호가 올바르지 않습니다.');
       }
     } catch {
-      // Fallback check if server offline or static deployment (Netlify)
-      const localPasscode = localStorage.getItem('teacher_passcode') || DEFAULT_PASSCODE;
-      if (pin.trim() === localPasscode || pin.trim() === DEFAULT_PASSCODE || pin.trim() === '130707') {
-        setPin('');
-        onSuccess();
-      } else {
-        setErrorMsg('비밀번호가 올바르지 않습니다.');
-      }
+      setErrorMsg('서버와 통신할 수 없습니다. 서버 실행 상태를 확인해 주세요.');
     } finally {
       setIsLoading(false);
     }

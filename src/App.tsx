@@ -16,7 +16,7 @@ export default function App() {
 
   // Teacher security state
   const [isTeacherUnlocked, setIsTeacherUnlocked] = useState<boolean>(
-    () => sessionStorage.getItem('is_teacher_unlocked') === 'true'
+    () => !!sessionStorage.getItem('teacher_session') && sessionStorage.getItem('is_teacher_unlocked') === 'true'
   );
   const [isTeacherModalOpen, setIsTeacherModalOpen] = useState(false);
   const [pendingTab, setPendingTab] = useState<'analytics' | 'words' | null>(null);
@@ -445,8 +445,9 @@ export default function App() {
     }
   };
 
-  const handleTeacherAuthSuccess = () => {
+  const handleTeacherAuthSuccess = (token: string) => {
     setIsTeacherUnlocked(true);
+    sessionStorage.setItem('teacher_session', token);
     sessionStorage.setItem('is_teacher_unlocked', 'true');
     setIsTeacherModalOpen(false);
     if (pendingTab) {
@@ -459,6 +460,7 @@ export default function App() {
 
   const handleLockTeacher = () => {
     setIsTeacherUnlocked(false);
+    sessionStorage.removeItem('teacher_session');
     sessionStorage.removeItem('is_teacher_unlocked');
     if (activeNav === 'analytics' || activeNav === 'words') {
       setActiveNav('game');

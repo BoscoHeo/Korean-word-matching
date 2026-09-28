@@ -61,6 +61,7 @@ export interface TeacherSettings {
   gasUrl?: string; // Optional Google Sheets Webhook URL
   autoSyncGoogleSheets?: boolean;
   passcode?: string;
+  passcodeHash?: string;
 }
 
 export interface LiveSession {

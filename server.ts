@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import { INITIAL_VOCABULARY_DATA } from "./src/data/initialWords.js";
 import { LearningLog, TeacherSettings, LiveSession } from "./src/types";
@@ -9,6 +10,90 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+
+// Teacher session management (in-memory)
+const SCRYPT_KEYLEN = 64;
+const SCRYPT_SALT_BYTES = 16;
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
+
+interface TeacherSession {
+  createdAt: number;
+  expiresAt: number;
+}
+const teacherSessions = new Map<string, TeacherSession>();
+
+export function hashPin(pin: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(SCRYPT_SALT_BYTES).toString("hex");
+    crypto.scrypt(pin, salt, SCRYPT_KEYLEN, (err, derivedKey) => {
+      if (err) return reject(err);
+      resolve(`scrypt:${salt}:${derivedKey.toString("hex")}`);
+    });
+  });
+}
+
+export function hashPinSync(pin: string): string {
+  const salt = crypto.randomBytes(SCRYPT_SALT_BYTES).toString("hex");
+  const derivedKey = crypto.scryptSync(pin, salt, SCRYPT_KEYLEN);
+  return `scrypt:${salt}:${derivedKey.toString("hex")}`;
+}
+
+export function verifyPin(pin: string, stored: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!stored || !pin) return resolve(false);
+
+    // Legacy plaintext support during progressive migration
+    if (!stored.startsWith("scrypt:")) {
+      return resolve(pin === stored);
+    }
+
+    const parts = stored.split(":");
+    if (parts.length !== 3) return resolve(false);
+    const salt = parts[1];
+    const originalHash = Buffer.from(parts[2], "hex");
+
+    crypto.scrypt(pin, salt, SCRYPT_KEYLEN, (err, derivedKey) => {
+      if (err) return resolve(false);
+      try {
+        const matches = crypto.timingSafeEqual(originalHash, derivedKey);
+        resolve(matches);
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
+
+export function createTeacherSession(): string {
+  const now = Date.now();
+  // Cleanup expired sessions
+  for (const [t, s] of teacherSessions.entries()) {
+    if (now > s.expiresAt) {
+      teacherSessions.delete(t);
+    }
+  }
+
+  const token = crypto.randomBytes(32).toString("hex");
+  teacherSessions.set(token, {
+    createdAt: now,
+    expiresAt: now + SESSION_TTL_MS
+  });
+  return token;
+}
+
+export function requireTeacherAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ success: false, message: "교사 인증이 필요합니다." });
+  }
+  const token = authHeader.substring(7).trim();
+  const session = teacherSessions.get(token);
+  if (!session || Date.now() > session.expiresAt) {
+    if (session) teacherSessions.delete(token);
+    return res.status(401).json({ success: false, message: "인증 세션이 만료되었거나 유효하지 않습니다." });
+  }
+  next();
+}
 
 // Live active sessions stored in memory
 const liveSessionsMap = new Map<string, LiveSession>();
@@ -35,7 +120,7 @@ const STORE_FILE = path.join(DATA_DIR, "learning_store.json");
 interface DataStore {
   vocabulary: Record<string, { word: string; def: string; example?: string }[]>;
   logs: LearningLog[];
-  settings: TeacherSettings;
+  settings: TeacherSettings & { passcodeHash?: string };
 }
 
 function loadStore(): DataStore {
@@ -55,7 +140,12 @@ function loadStore(): DataStore {
     const raw = fs.readFileSync(STORE_FILE, "utf-8");
     const data = JSON.parse(raw);
     if (!data.settings) {
-      data.settings = { gasUrl: "https://script.google.com/macros/s/AKfycby7y17aCdMPi_NP6rWl4YXfUckniJLS2H620q0nXw0CEYSejHMTJYn-eFc_dnSruDvS/exec", autoSyncGoogleSheets: true, passcode: "130707" };
+      const initialPin = process.env.TEACHER_INITIAL_PASSCODE || (process.env.NODE_ENV !== "production" ? "0000" : "");
+      data.settings = {
+        gasUrl: "https://script.google.com/macros/s/AKfycby7y17aCdMPi_NP6rWl4YXfUckniJLS2H620q0nXw0CEYSejHMTJYn-eFc_dnSruDvS/exec",
+        autoSyncGoogleSheets: true,
+        passcodeHash: initialPin ? hashPinSync(initialPin) : ""
+      };
       saveStore(data);
     } else {
       let changed = false;
@@ -64,9 +154,12 @@ function loadStore(): DataStore {
         data.settings.autoSyncGoogleSheets = true;
         changed = true;
       }
-      if (!data.settings.passcode || data.settings.passcode === "1234") {
-        data.settings.passcode = "130707";
-        changed = true;
+      if (!data.settings.passcode && !data.settings.passcodeHash) {
+        const initialPin = process.env.TEACHER_INITIAL_PASSCODE || (process.env.NODE_ENV !== "production" ? "0000" : "");
+        if (initialPin) {
+          data.settings.passcodeHash = hashPinSync(initialPin);
+          changed = true;
+        }
       }
       if (changed) saveStore(data);
     }
@@ -396,34 +489,85 @@ app.delete("/api/live-session/:id", (req, res) => {
 });
 
 // POST /api/verify-pin
-app.post("/api/verify-pin", (req, res) => {
+app.post("/api/verify-pin", async (req, res) => {
   const { pin } = req.body;
-  const store = loadStore();
-  const currentPin = store.settings?.passcode || "130707";
-  if (pin === currentPin) {
-    return res.json({ success: true, message: "선생님 인증에 성공했습니다." });
-  } else {
+  if (!pin || typeof pin !== "string") {
     return res.status(401).json({ success: false, message: "선생님 비밀번호(PIN)가 올바르지 않습니다." });
   }
+
+  const store = loadStore();
+  const stored = store.settings?.passcodeHash || store.settings?.passcode || "";
+
+  const isValid = await verifyPin(pin.trim(), stored);
+  if (!isValid) {
+    return res.status(401).json({ success: false, message: "선생님 비밀번호(PIN)가 올바르지 않습니다." });
+  }
+
+  // Progressive migration: If stored PIN was plaintext, upgrade to scrypt hash immediately
+  if (store.settings?.passcode && !store.settings?.passcodeHash) {
+    try {
+      const hashed = await hashPin(pin.trim());
+      store.settings.passcodeHash = hashed;
+      delete store.settings.passcode;
+      saveStore(store);
+    } catch (e) {
+      console.error("Failed to migrate legacy PIN to hash:", e);
+    }
+  }
+
+  const token = createTeacherSession();
+  res.json({
+    success: true,
+    token,
+    expiresIn: SESSION_TTL_MS,
+    message: "선생님 인증에 성공했습니다."
+  });
 });
 
 // GET /api/settings & POST /api/settings
 app.get("/api/settings", (req, res) => {
   const store = loadStore();
-  res.json({ success: true, settings: store.settings });
+  // Never expose passcode or passcodeHash to client
+  res.json({
+    success: true,
+    settings: {
+      gasUrl: store.settings?.gasUrl || "",
+      autoSyncGoogleSheets: store.settings?.autoSyncGoogleSheets ?? true
+    }
+  });
 });
 
-app.post("/api/settings", (req, res) => {
+app.post("/api/settings", async (req, res) => {
   const { gasUrl, autoSyncGoogleSheets, passcode } = req.body;
   const store = loadStore();
+
+  let newPasscodeHash = store.settings?.passcodeHash;
+  if (passcode && typeof passcode === "string" && passcode.trim()) {
+    newPasscodeHash = await hashPin(passcode.trim());
+  }
+
   store.settings = {
-    ...store.settings,
     gasUrl: gasUrl !== undefined ? gasUrl : store.settings?.gasUrl,
     autoSyncGoogleSheets: autoSyncGoogleSheets !== undefined ? autoSyncGoogleSheets : store.settings?.autoSyncGoogleSheets,
-    passcode: passcode !== undefined ? passcode : (store.settings?.passcode || "130707")
+    passcodeHash: newPasscodeHash
   };
+  // Ensure legacy plaintext passcode is removed
+  delete store.settings.passcode;
+
   saveStore(store);
-  res.json({ success: true, settings: store.settings, message: "선생님 환경설정이 저장되었습니다." });
+  res.json({
+    success: true,
+    settings: {
+      gasUrl: store.settings.gasUrl,
+      autoSyncGoogleSheets: store.settings.autoSyncGoogleSheets
+    },
+    message: "선생님 환경설정이 저장되었습니다."
+  });
+});
+
+// GET /api/teacher/session-check (SEC-1 verification endpoint)
+app.get("/api/teacher/session-check", requireTeacherAuth, (req, res) => {
+  res.json({ success: true, message: "교사 세션이 유효합니다." });
 });
 
 // POST /api/reset-data

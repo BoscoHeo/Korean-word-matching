@@ -36,7 +36,7 @@ import {
   Line
 } from 'recharts';
 
-import { DEFAULT_PASSCODE, DEFAULT_GAS_URL } from '../constants';
+import { DEFAULT_GAS_URL } from '../constants';
 
 interface AnalyticsDashboardProps {
   logs: LearningLog[];
@@ -61,7 +61,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
   // Teacher settings state
   const [gasUrlInput, setGasUrlInput] = useState(DEFAULT_GAS_URL);
-  const [passcodeInput, setPasscodeInput] = useState(DEFAULT_PASSCODE);
+  const [passcodeInput, setPasscodeInput] = useState('');
   const [settingsSaveMsg, setSettingsSaveMsg] = useState('');
 
   const fetchLiveSessions = () => {
@@ -87,13 +87,12 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   }, [autoRefreshLive]);
 
   useEffect(() => {
-    // Load from localStorage first as instant fallback
+    // Load from localStorage first as instant fallback for gasUrl
     const cachedSettings = localStorage.getItem('teacher_settings');
     if (cachedSettings) {
       try {
         const parsed = JSON.parse(cachedSettings);
         if (parsed.gasUrl) setGasUrlInput(parsed.gasUrl);
-        if (parsed.passcode) setPasscodeInput(parsed.passcode);
       } catch {
         // ignore
       }
@@ -103,11 +102,11 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.settings) {
-          if (data.settings.gasUrl) setGasUrlInput(data.settings.gasUrl);
-          if (data.settings.passcode) setPasscodeInput(data.settings.passcode);
-          localStorage.setItem('teacher_settings', JSON.stringify(data.settings));
-          if (data.settings.gasUrl) localStorage.setItem('teacher_gas_url', data.settings.gasUrl);
-          if (data.settings.passcode) localStorage.setItem('teacher_passcode', data.settings.passcode);
+          if (data.settings.gasUrl) {
+            setGasUrlInput(data.settings.gasUrl);
+            localStorage.setItem('teacher_gas_url', data.settings.gasUrl);
+            localStorage.setItem('teacher_settings', JSON.stringify({ gasUrl: data.settings.gasUrl }));
+          }
         }
       })
       .catch((err) => console.log('Notice: Running in static mode or server offline', err));
@@ -118,19 +117,23 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     setSettingsSaveMsg('');
     
     const cleanGasUrl = gasUrlInput.trim();
-    const cleanPasscode = passcodeInput.trim() || DEFAULT_PASSCODE;
+    const cleanPasscode = passcodeInput.trim();
 
-    // Always persist to localStorage for client-side / Netlify compatibility
     localStorage.setItem('teacher_gas_url', cleanGasUrl);
-    localStorage.setItem('teacher_passcode', cleanPasscode);
-    localStorage.setItem('teacher_settings', JSON.stringify({ gasUrl: cleanGasUrl, passcode: cleanPasscode }));
+    localStorage.setItem('teacher_settings', JSON.stringify({ gasUrl: cleanGasUrl }));
+
+    const payload: { gasUrl: string; passcode?: string } = { gasUrl: cleanGasUrl };
+    if (cleanPasscode) {
+      payload.passcode = cleanPasscode;
+    }
 
     try {
       await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gasUrl: cleanGasUrl, passcode: cleanPasscode })
+        body: JSON.stringify(payload)
       });
+      setPasscodeInput('');
     } catch {
       // Ignore API server errors when deployed as static SPA
     }
@@ -1044,8 +1047,8 @@ function doPost(e) {
               type="password"
               value={passcodeInput}
               onChange={(e) => setPasscodeInput(e.target.value)}
-              placeholder="새 비밀번호 입력"
-              className="w-48 px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-bold tracking-widest outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-slate-900"
+              placeholder="새 비밀번호 입력 (변경 시에만 입력)"
+              className="w-72 px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-bold tracking-widest outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-slate-900"
             />
             <p className="text-xs text-slate-500">
               * 학생들이 개별 성적 및 단어장 관리에 접근하지 못하도록 보호하는 비밀번호입니다.
