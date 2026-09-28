@@ -251,14 +251,14 @@ function generateSampleLogs(): LearningLog[] {
 
 // REST API Endpoints
 
-// GET /api/words - fetch current word set pages
+// GET /api/words - fetch current word set pages (public for student gameplay)
 app.get("/api/words", (req, res) => {
   const store = loadStore();
   res.json({ success: true, pages: store.vocabulary });
 });
 
-// POST /api/words - add or update custom page
-app.post("/api/words", (req, res) => {
+// POST /api/words - add or update custom page (teacher only)
+app.post("/api/words", requireTeacherAuth, (req, res) => {
   const { pageName, words } = req.body;
   if (!pageName || !Array.isArray(words)) {
     return res.status(400).json({ success: false, message: "Invalid payload" });
@@ -269,8 +269,8 @@ app.post("/api/words", (req, res) => {
   res.json({ success: true, message: "단어 페이지가 저장되었습니다.", pages: store.vocabulary });
 });
 
-// GET /api/learning-logs
-app.get("/api/learning-logs", (req, res) => {
+// GET /api/learning-logs (teacher only - contains student PII and scores)
+app.get("/api/learning-logs", requireTeacherAuth, (req, res) => {
   const store = loadStore();
   const { studentName, gradeClass } = req.query;
   let filtered = store.logs;
@@ -285,7 +285,7 @@ app.get("/api/learning-logs", (req, res) => {
   res.json({ success: true, logs: filtered });
 });
 
-// POST /api/learning-logs - save a new game result
+// POST /api/learning-logs - save a new game result (public for student submission)
 app.post("/api/learning-logs", (req, res) => {
   let logData: LearningLog = req.body;
   if (typeof logData === "string") {
@@ -320,8 +320,8 @@ app.post("/api/learning-logs", (req, res) => {
   res.json({ success: true, log: newLog });
 });
 
-// GET /api/analytics/student/:name
-app.get("/api/analytics/student/:name", (req, res) => {
+// GET /api/analytics/student/:name (teacher only)
+app.get("/api/analytics/student/:name", requireTeacherAuth, (req, res) => {
   const name = req.params.name;
   const store = loadStore();
   const studentLogs = store.logs.filter(l => l.studentName === name);
@@ -369,8 +369,8 @@ app.get("/api/analytics/student/:name", (req, res) => {
   res.json({ success: true, summary });
 });
 
-// GET /api/analytics/class
-app.get("/api/analytics/class", (req, res) => {
+// GET /api/analytics/class (teacher only)
+app.get("/api/analytics/class", requireTeacherAuth, (req, res) => {
   const store = loadStore();
   const logs = store.logs;
 
@@ -465,8 +465,8 @@ app.post("/api/live-session", (req, res) => {
   res.json({ success: true });
 });
 
-// GET /api/live-sessions - fetch active live sessions for teacher dashboard
-app.get("/api/live-sessions", (req, res) => {
+// GET /api/live-sessions - fetch active live sessions for teacher dashboard (teacher only)
+app.get("/api/live-sessions", requireTeacherAuth, (req, res) => {
   const now = Date.now();
   const sessions = Array.from(liveSessionsMap.values())
     .map(s => {
@@ -481,10 +481,12 @@ app.get("/api/live-sessions", (req, res) => {
   res.json({ success: true, sessions });
 });
 
-// DELETE /api/live-session/:id
+// DELETE /api/live-session/:id (public for student cleanup)
 app.delete("/api/live-session/:id", (req, res) => {
   const { id } = req.params;
-  liveSessionsMap.delete(id);
+  if (id) {
+    liveSessionsMap.delete(id);
+  }
   res.json({ success: true });
 });
 
@@ -524,8 +526,8 @@ app.post("/api/verify-pin", async (req, res) => {
   });
 });
 
-// GET /api/settings & POST /api/settings
-app.get("/api/settings", (req, res) => {
+// GET /api/settings & POST /api/settings (teacher only)
+app.get("/api/settings", requireTeacherAuth, (req, res) => {
   const store = loadStore();
   // Never expose passcode or passcodeHash to client
   res.json({
@@ -537,7 +539,7 @@ app.get("/api/settings", (req, res) => {
   });
 });
 
-app.post("/api/settings", async (req, res) => {
+app.post("/api/settings", requireTeacherAuth, async (req, res) => {
   const { gasUrl, autoSyncGoogleSheets, passcode } = req.body;
   const store = loadStore();
 
@@ -570,16 +572,16 @@ app.get("/api/teacher/session-check", requireTeacherAuth, (req, res) => {
   res.json({ success: true, message: "교사 세션이 유효합니다." });
 });
 
-// POST /api/reset-data
-app.post("/api/reset-data", (req, res) => {
+// POST /api/reset-data (teacher only)
+app.post("/api/reset-data", requireTeacherAuth, (req, res) => {
   const store = loadStore();
   store.logs = generateSampleLogs();
   saveStore(store);
   res.json({ success: true, message: "학습 데이터가 초기화되었습니다." });
 });
 
-// POST /api/reset-words
-app.post("/api/reset-words", (req, res) => {
+// POST /api/reset-words (teacher only)
+app.post("/api/reset-words", requireTeacherAuth, (req, res) => {
   const store = loadStore();
   store.vocabulary = INITIAL_VOCABULARY_DATA;
   saveStore(store);

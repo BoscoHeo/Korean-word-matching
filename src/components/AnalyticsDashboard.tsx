@@ -37,6 +37,7 @@ import {
 } from 'recharts';
 
 import { DEFAULT_GAS_URL } from '../constants';
+import { teacherFetch } from '../utils/api';
 
 interface AnalyticsDashboardProps {
   logs: LearningLog[];
@@ -65,7 +66,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   const [settingsSaveMsg, setSettingsSaveMsg] = useState('');
 
   const fetchLiveSessions = () => {
-    fetch('/api/live-sessions')
+    teacherFetch('/api/live-sessions')
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.sessions) {
@@ -98,7 +99,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
       }
     }
 
-    fetch('/api/settings')
+    teacherFetch('/api/settings')
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.settings) {
@@ -128,7 +129,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     }
 
     try {
-      await fetch('/api/settings', {
+      await teacherFetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -243,7 +244,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
   // Fetch Class Analytics
   useEffect(() => {
-    fetch('/api/analytics/class')
+    teacherFetch('/api/analytics/class')
       .then((res) => {
         if (!res.ok) throw new Error('API error');
         return res.json();
@@ -273,7 +274,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   // Fetch Student Specific Analytics
   useEffect(() => {
     if (selectedStudent) {
-      fetch(`/api/analytics/student/${encodeURIComponent(selectedStudent)}`)
+      teacherFetch(`/api/analytics/student/${encodeURIComponent(selectedStudent)}`)
         .then((res) => {
           if (!res.ok) throw new Error('API error');
           return res.json();
@@ -322,7 +323,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
   const handleResetData = async () => {
     if (window.confirm('데모 학습 데이터를 초기 상태로 리셋하시겠습니까?')) {
-      await fetch('/api/reset-data', { method: 'POST' });
+      await teacherFetch('/api/reset-data', { method: 'POST' });
       onRefreshData();
     }
   };

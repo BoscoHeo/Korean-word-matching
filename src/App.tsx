@@ -9,6 +9,7 @@ import { TeacherAuthModal } from './components/TeacherAuthModal';
 import { WordItem, LearningLog, WrongWordRecord } from './types';
 import { INITIAL_VOCABULARY_DATA } from './data/initialWords';
 import { DEFAULT_GAS_URL } from './constants';
+import { teacherFetch, getTeacherSession } from './utils/api';
 
 export default function App() {
   const [activeNav, setActiveNav] = useState<'game' | 'analytics' | 'words' | 'settings'>('game');
@@ -50,11 +51,23 @@ export default function App() {
     syncStatusMsg?: string;
   } | null>(null);
 
-  // Fetch words and learning logs on mount
+  // Fetch words on mount (students only load vocabulary, never learning logs)
   useEffect(() => {
     loadVocabulary();
-    loadLearningLogs();
   }, []);
+
+  // Listen for teacher session expiration event
+  useEffect(() => {
+    const onSessionExpired = () => {
+      setIsTeacherUnlocked(false);
+      if (activeNav === 'analytics' || activeNav === 'words') {
+        setActiveNav('game');
+        alert('선생님 인증 세션이 만료되었습니다. 다시 인증해 주세요.');
+      }
+    };
+    window.addEventListener('teacher-session-expired', onSessionExpired);
+    return () => window.removeEventListener('teacher-session-expired', onSessionExpired);
+  }, [activeNav]);
 
   const loadVocabulary = () => {
     fetch('/api/words')
@@ -67,106 +80,18 @@ export default function App() {
       .catch((err) => console.error('Failed to load words:', err));
   };
 
-  const parseWrongWordsString = (text: string): WrongWordRecord[] => {
-    if (!text || typeof text !== 'string') return [];
-    const items = text.split(',').map((s) => s.trim()).filter(Boolean);
-    return items.map((item) => {
-      const match = item.match(/^([^(]+)(?:\((.*)\))?$/);
-      if (match) {
-        return {
-          word: match[1].trim(),
-          def: match[2]?.trim() || '',
-          wrongMatchesCount: 1
-        };
-      }
-      return {
-        word: item,
-        def: '',
-        wrongMatchesCount: 1
-      };
-    });
-  };
-
   const loadLearningLogs = async () => {
-    let localLogs: LearningLog[] = [];
+    if (!getTeacherSession()) return;
     try {
-      const savedBackup = localStorage.getItem('all_learning_logs_backup');
-      if (savedBackup) {
-        localLogs = JSON.parse(savedBackup);
-      }
-    } catch {
-      // ignore
-    }
-
-    // 1. Try Express API first
-    try {
-      const res = await fetch('/api/learning-logs');
+      const res = await teacherFetch('/api/learning-logs');
       if (res.ok) {
         const data = await res.json();
-        if (data.success && Array.isArray(data.logs) && data.logs.length > 0) {
+        if (data.success && Array.isArray(data.logs)) {
           setLogs(data.logs);
-          return;
         }
       }
-    } catch {
-      // Netlify / static environment fallback
-    }
-
-    // 2. Try Google Apps Script direct fetch
-    const currentGasUrl = localStorage.getItem('teacher_gas_url') || DEFAULT_GAS_URL;
-    if (currentGasUrl) {
-      try {
-        const gasRes = await fetch(currentGasUrl);
-        if (gasRes.ok) {
-          const gasData = await gasRes.json();
-          if (gasData.success && Array.isArray(gasData.logs)) {
-            const parsedGasLogs: LearningLog[] = gasData.logs.map((row: any, idx: number) => {
-              const accuracyNum = typeof row.accuracy === 'number'
-                ? row.accuracy
-                : parseInt(String(row.accuracy).replace('%', '')) || 100;
-              const timeSec = typeof row.timeElapsed === 'number'
-                ? row.timeElapsed
-                : (parseInt(String(row.timeElapsed).replace('초', '')) || 0);
-              const scoreNum = Number(row.score) || 0;
-              const pagesArr = Array.isArray(row.pages)
-                ? row.pages
-                : (row.page ? String(row.page).split(', ') : ['기본']);
-              const wrongList = row.wrongWords && Array.isArray(row.wrongWords)
-                ? row.wrongWords
-                : parseWrongWordsString(row.wrongWords || row.wrongWordsText || '');
-
-              return {
-                id: row.id || `gas_log_${idx}_${Date.now()}`,
-                studentName: row.studentName || row.name || '익명 학생',
-                gradeClass: row.gradeClass || row.cls || '',
-                pages: pagesArr,
-                score: scoreNum,
-                timeElapsed: timeSec,
-                accuracy: accuracyNum,
-                wrongWords: wrongList,
-                wrongAttemptsCount: wrongList.length,
-                timestamp: row.timestamp || new Date().toISOString(),
-                mode: row.status || 'standard'
-              };
-            });
-
-            if (parsedGasLogs.length > 0) {
-              // Merge with local logs if any
-              const combined = [...parsedGasLogs];
-              setLogs(combined);
-              localStorage.setItem('all_learning_logs_backup', JSON.stringify(combined));
-              return;
-            }
-          }
-        }
-      } catch (err) {
-        console.log('Google Apps Script fetch notice:', err);
-      }
-    }
-
-    // Fallback to local logs
-    if (localLogs.length > 0) {
-      setLogs(localLogs);
+    } catch (err) {
+      console.error('Failed to load learning logs:', err);
     }
   };
 
@@ -187,22 +112,28 @@ export default function App() {
     let wordsToPlay: WordItem[] = [];
 
     if (mode === 'review') {
-      // Collect wrong words for this student across prior logs (with trim comparison)
       const trimmedName = name.trim();
-      const studentLogs = logs.filter((l) => l.studentName.trim() === trimmedName);
       const wrongMap = new Map<string, WordItem>();
 
-      studentLogs.forEach((l) => {
-        (l.wrongWords || []).forEach((w) => {
-          if (!wrongMap.has(w.word)) {
-            wrongMap.set(w.word, { id: w.word, word: w.word, def: w.def, page: '오답노트' });
-          }
-        });
-      });
+      // 1. Load from student's local wrong words store
+      try {
+        const savedWrong = localStorage.getItem(`student_wrong_words_${trimmedName}`);
+        if (savedWrong) {
+          const parsedWrong: WrongWordRecord[] = JSON.parse(savedWrong);
+          parsedWrong.forEach((w) => {
+            if (!wrongMap.has(w.word)) {
+              wrongMap.set(w.word, { id: w.word, word: w.word, def: w.def, page: '오답노트' });
+            }
+          });
+        }
+      } catch {
+        // ignore
+      }
 
-      // Fallback: If no wrong words for specific student name, use all wrong words in system logs
-      if (wrongMap.size === 0) {
-        logs.forEach((l) => {
+      // 2. If memory logs are loaded for this student, include them
+      if (logs.length > 0) {
+        const studentLogs = logs.filter((l) => l.studentName.trim() === trimmedName);
+        studentLogs.forEach((l) => {
           (l.wrongWords || []).forEach((w) => {
             if (!wrongMap.has(w.word)) {
               wrongMap.set(w.word, { id: w.word, word: w.word, def: w.def, page: '오답노트' });
@@ -323,14 +254,18 @@ export default function App() {
       : '✅ 학습 데이터가 성공적으로 저장되었습니다.';
 
     try {
-      const res = await fetch('/api/learning-logs', {
+      await fetch('/api/learning-logs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(logPayload)
       });
-      const data = await res.json();
-      if (data.success) {
-        loadLearningLogs(); // Refresh logs
+      // Save wrong words locally for this student's isolated review mode
+      if (studentName.trim() && wrongWords && wrongWords.length > 0) {
+        try {
+          localStorage.setItem(`student_wrong_words_${studentName.trim()}`, JSON.stringify(wrongWords));
+        } catch {
+          // ignore
+        }
       }
     } catch {
       syncMsg = '⚠️ 로컬/시트 자동 전송 모드로 기록이 저장되었습니다.';
@@ -387,7 +322,7 @@ export default function App() {
     words: { word: string; def: string; example?: string }[]
   ) => {
     try {
-      const res = await fetch('/api/words', {
+      const res = await teacherFetch('/api/words', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pageName, words })
@@ -404,7 +339,7 @@ export default function App() {
   const handleResetWords = async () => {
     if (!confirm('기본 교재 어휘(1~13페이지) 데이터로 복원하시겠습니까?')) return;
     try {
-      const res = await fetch('/api/reset-words', { method: 'POST' });
+      const res = await teacherFetch('/api/reset-words', { method: 'POST' });
       const data = await res.json();
       if (data.success && data.pages) {
         setVocabulary(data.pages);
@@ -424,11 +359,12 @@ export default function App() {
   };
 
   // Check if student has wrong words for review
-  const hasWrongWordsForStudent = studentName
-    ? logs
-        .filter((l) => l.studentName === studentName)
-        .some((l) => (l.wrongWords || []).length > 0)
-    : false;
+  const hasWrongWordsForStudent = Boolean(
+    studentName.trim() && (
+      localStorage.getItem(`student_wrong_words_${studentName.trim()}`) ||
+      logs.filter((l) => l.studentName.trim() === studentName.trim()).some((l) => (l.wrongWords || []).length > 0)
+    )
+  );
 
   // Tab navigation with teacher access control
   const handleTabChange = (tab: 'game' | 'analytics' | 'words' | 'settings') => {
@@ -437,6 +373,9 @@ export default function App() {
         setPendingTab(tab);
         setIsTeacherModalOpen(true);
         return;
+      }
+      if (tab === 'analytics') {
+        loadLearningLogs();
       }
     }
     setActiveNav(tab);
@@ -450,6 +389,7 @@ export default function App() {
     sessionStorage.setItem('teacher_session', token);
     sessionStorage.setItem('is_teacher_unlocked', 'true');
     setIsTeacherModalOpen(false);
+    loadLearningLogs();
     if (pendingTab) {
       setActiveNav(pendingTab);
       setPendingTab(null);
