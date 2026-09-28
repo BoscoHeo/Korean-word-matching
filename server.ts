@@ -4,12 +4,67 @@ import fs from "fs";
 import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import { INITIAL_VOCABULARY_DATA } from "./src/data/initialWords.js";
-import { LearningLog, TeacherSettings, LiveSession } from "./src/types";
+import { LearningLog, TeacherSettings, LiveSession, WrongWordRecord } from "./src/types";
 
-const app = express();
+export const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+// JSON body 크기 제한 (64KB) - DoS 방어 및 정상 학습 페이로드 충분한 수용
+app.use(express.json({ limit: "64kb" }));
+
+// Express JSON body parse error handler (413 & 400)
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err && (err.type === "entity.too.large" || err.status === 413)) {
+    return res.status(413).json({ success: false, message: "요청 본문 크기가 제한(64KB)을 초과했습니다." });
+  }
+  if (err instanceof SyntaxError && "body" in err) {
+    return res.status(400).json({ success: false, message: "잘못된 JSON 형식입니다." });
+  }
+  next(err);
+});
+
+// Teacher PIN Rate Limiter (In-Memory)
+interface PinAttemptRecord {
+  count: number;
+  firstAttempt: number;
+  lockedUntil?: number;
+}
+const pinAttemptMap = new Map<string, PinAttemptRecord>();
+const PIN_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000; // 5분
+const PIN_RATE_LIMIT_MAX_ATTEMPTS = 5; // 최대 5회 실패 허용
+const PIN_RATE_LIMIT_LOCK_MS = 5 * 60 * 1000; // 5회 초과 실패 시 5분 차단
+
+// 주기적 만료 레코드 정리 (5분 간격)
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of pinAttemptMap.entries()) {
+    if ((record.lockedUntil && now > record.lockedUntil) || (now - record.firstAttempt > PIN_RATE_LIMIT_WINDOW_MS * 2)) {
+      pinAttemptMap.delete(ip);
+    }
+  }
+}, 5 * 60 * 1000);
+
+export function getClientIp(req: express.Request): string {
+  return (req.ip || req.socket.remoteAddress || "unknown").toString();
+}
+
+export function recordPinFailure(ip: string): void {
+  const now = Date.now();
+  let attempt = pinAttemptMap.get(ip);
+  if (!attempt || now - attempt.firstAttempt > PIN_RATE_LIMIT_WINDOW_MS) {
+    attempt = { count: 1, firstAttempt: now };
+  } else {
+    attempt.count += 1;
+  }
+  if (attempt.count >= PIN_RATE_LIMIT_MAX_ATTEMPTS) {
+    attempt.lockedUntil = now + PIN_RATE_LIMIT_LOCK_MS;
+  }
+  pinAttemptMap.set(ip, attempt);
+}
+
+export function clearPinRateLimit(ip: string): void {
+  pinAttemptMap.delete(ip);
+}
 
 // Teacher session management (in-memory)
 const SCRYPT_KEYLEN = 64;
@@ -285,29 +340,185 @@ app.get("/api/learning-logs", requireTeacherAuth, (req, res) => {
   res.json({ success: true, logs: filtered });
 });
 
-// POST /api/learning-logs - save a new game result (public for student submission)
-app.post("/api/learning-logs", (req, res) => {
-  let logData: LearningLog = req.body;
-  if (typeof logData === "string") {
-    try {
-      logData = JSON.parse(logData);
-    } catch {
-      // ignore
+// Input validation helpers for public student endpoints
+const CONTROL_CHARS_REGEX = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+
+export function validateAndSanitizeLearningLog(body: any): { valid: boolean; error?: string; data?: Omit<LearningLog, 'id'> } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { valid: false, error: "요청 데이터가 올바른 객체 형식이 아닙니다." };
+  }
+
+  // 1. studentName (필수, 1~50자)
+  if (typeof body.studentName !== "string") {
+    return { valid: false, error: "학생 이름은 필수 문자열입니다." };
+  }
+  const studentName = body.studentName.trim();
+  if (studentName.length === 0 || studentName.length > 50) {
+    return { valid: false, error: "학생 이름은 1자 이상 50자 이하이어야 합니다." };
+  }
+  if (CONTROL_CHARS_REGEX.test(studentName)) {
+    return { valid: false, error: "학생 이름에 허용되지 않는 제어 문자가 포함되어 있습니다." };
+  }
+
+  // 2. gradeClass (선택, 최대 50자)
+  let gradeClass = "";
+  if (body.gradeClass !== undefined && body.gradeClass !== null) {
+    if (typeof body.gradeClass !== "string") {
+      return { valid: false, error: "학년/반 정보는 문자열이어야 합니다." };
+    }
+    gradeClass = body.gradeClass.trim();
+    if (gradeClass.length > 50) {
+      return { valid: false, error: "학년/반 정보는 50자 이하이어야 합니다." };
+    }
+    if (CONTROL_CHARS_REGEX.test(gradeClass)) {
+      return { valid: false, error: "학년/반 정보에 허용되지 않는 제어 문자가 포함되어 있습니다." };
     }
   }
 
-  if (!logData || !logData.studentName) {
-    return res.status(400).json({ success: false, message: "학생 이름이 필요합니다." });
+  // 3. pages (선택, string[] 최대 50개)
+  let pages: string[] = [];
+  if (body.pages !== undefined && body.pages !== null) {
+    if (!Array.isArray(body.pages)) {
+      return { valid: false, error: "학습 페이지 목록은 배열이어야 합니다." };
+    }
+    if (body.pages.length > 50) {
+      return { valid: false, error: "학습 페이지 개수는 최대 50개까지 허용됩니다." };
+    }
+    for (const p of body.pages) {
+      if (typeof p !== "string" || p.trim().length > 30 || CONTROL_CHARS_REGEX.test(p)) {
+        return { valid: false, error: "유효하지 않은 페이지 항목이 포함되어 있습니다." };
+      }
+      pages.push(p.trim());
+    }
+  }
+
+  // 4. 숫자 필드 검증 (음수 차단, finite number 확인)
+  const checkNumber = (val: any, min: number, max: number, name: string): number => {
+    if (typeof val !== "number" || !Number.isFinite(val) || Number.isNaN(val)) {
+      throw new Error(`${name} 필드는 유효한 숫자여야 합니다.`);
+    }
+    if (val < min || val > max) {
+      throw new Error(`${name} 값(${val})이 허용 범위(${min} ~ ${max})를 벗어났습니다.`);
+    }
+    return Math.round(val);
+  };
+
+  let totalWords = 0;
+  let completedWords = 0;
+  let score = 0;
+  let timeElapsed = 0;
+  let accuracy = 100;
+  let wrongAttemptsCount = 0;
+
+  try {
+    totalWords = checkNumber(body.totalWords ?? 0, 0, 500, "총 단어 수(totalWords)");
+    completedWords = checkNumber(body.completedWords ?? 0, 0, 500, "완료 단어 수(completedWords)");
+    if (totalWords > 0 && completedWords > totalWords) {
+      return { valid: false, error: "완료 단어 수가 총 단어 수보다 클 수 없습니다." };
+    }
+
+    // score: 단어당 100점 + 콤보 보너스 (최대 1,000,000점 허용)
+    score = checkNumber(body.score ?? 0, 0, 1_000_000, "점수(score)");
+    timeElapsed = checkNumber(body.timeElapsed ?? 0, 0, 86_400, "소요 시간(timeElapsed)");
+    accuracy = checkNumber(body.accuracy ?? 100, 0, 100, "정확도(accuracy)");
+    wrongAttemptsCount = checkNumber(body.wrongAttemptsCount ?? 0, 0, 10_000, "오답 시도 횟수(wrongAttemptsCount)");
+  } catch (err: any) {
+    return { valid: false, error: err.message };
+  }
+
+  // 5. wrongWords (선택, 최대 200개 객체 배열)
+  let wrongWords: WrongWordRecord[] = [];
+  if (body.wrongWords !== undefined && body.wrongWords !== null) {
+    if (!Array.isArray(body.wrongWords)) {
+      return { valid: false, error: "오답 목록은 배열이어야 합니다." };
+    }
+    if (body.wrongWords.length > 200) {
+      return { valid: false, error: "오답 목록은 최대 200개까지 허용됩니다." };
+    }
+    for (const item of body.wrongWords) {
+      if (!item || typeof item !== "object") {
+        return { valid: false, error: "오답 항목 형식이 올바르지 않습니다." };
+      }
+      if (typeof item.word !== "string" || item.word.trim().length === 0 || item.word.trim().length > 100) {
+        return { valid: false, error: "오답 단어는 1자 이상 100자 이하의 문자열이어야 합니다." };
+      }
+      const defStr = typeof item.def === "string" ? item.def.trim() : "";
+      if (defStr.length > 500) {
+        return { valid: false, error: "오답 설명은 500자 이하이어야 합니다." };
+      }
+      const count = typeof item.wrongMatchesCount === "number" && Number.isFinite(item.wrongMatchesCount)
+        ? Math.max(0, Math.min(1000, Math.round(item.wrongMatchesCount)))
+        : 1;
+
+      wrongWords.push({
+        word: item.word.trim(),
+        def: defStr,
+        wrongMatchesCount: count
+      });
+    }
+  }
+
+  // 6. mode
+  let mode = "standard";
+  if (typeof body.mode === "string") {
+    const trimmedMode = body.mode.trim();
+    if (trimmedMode.length <= 30 && !CONTROL_CHARS_REGEX.test(trimmedMode)) {
+      mode = trimmedMode;
+    }
+  }
+
+  // 7. timestamp
+  let timestamp = new Date().toISOString();
+  if (typeof body.timestamp === "string") {
+    const trimmedTs = body.timestamp.trim();
+    if (trimmedTs.length <= 50 && !Number.isNaN(Date.parse(trimmedTs))) {
+      timestamp = trimmedTs;
+    }
+  }
+
+  return {
+    valid: true,
+    data: {
+      studentName,
+      gradeClass,
+      pages,
+      totalWords,
+      completedWords,
+      score,
+      timeElapsed,
+      accuracy,
+      wrongAttemptsCount,
+      wrongWords,
+      timestamp,
+      mode
+    }
+  };
+}
+
+// POST /api/learning-logs - save a new game result (public for student submission, strict validation)
+app.post("/api/learning-logs", (req, res) => {
+  let logPayload = req.body;
+  if (typeof logPayload === "string") {
+    try {
+      logPayload = JSON.parse(logPayload);
+    } catch {
+      return res.status(400).json({ success: false, message: "잘못된 JSON 형식입니다." });
+    }
+  }
+
+  const validation = validateAndSanitizeLearningLog(logPayload);
+  if (!validation.valid || !validation.data) {
+    return res.status(400).json({ success: false, message: validation.error || "입력 검증에 실패했습니다." });
   }
 
   const store = loadStore();
+  // Sanitize: req.body 전체 spread 금지, 검증된 순수 데이터만 추출하여 저장
   const newLog: LearningLog = {
-    ...logData,
-    id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    timestamp: logData.timestamp || new Date().toISOString()
+    ...validation.data,
+    id: `log_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`
   };
 
-  store.logs.unshift(newLog); // latest first
+  store.logs.unshift(newLog); // 최신순 저장
   saveStore(store);
 
   // If Google Sheets URL configured, attempt sync
@@ -445,23 +656,84 @@ app.get("/api/analytics/class", requireTeacherAuth, (req, res) => {
   });
 });
 
-// POST /api/live-session - update or create a student's real-time playing progress
-app.post("/api/live-session", (req, res) => {
-  const sessionData: LiveSession = req.body;
-  if (!sessionData || !sessionData.sessionId) {
-    return res.status(400).json({ success: false, message: "올바른 세션 정보가 없습니다." });
+// LiveSession validation helper
+const SESSION_ID_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
+
+export function validateAndSanitizeLiveSession(body: any): { valid: boolean; error?: string; data?: LiveSession } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { valid: false, error: "세션 데이터가 올바른 객체 형식이 아닙니다." };
   }
 
-  const nameToUse = (sessionData.studentName && sessionData.studentName.trim()) 
-    ? sessionData.studentName.trim() 
-    : '익명 학생';
+  if (typeof body.sessionId !== "string" || !SESSION_ID_REGEX.test(body.sessionId)) {
+    return { valid: false, error: "유효하지 않은 세션 ID입니다." };
+  }
 
-  liveSessionsMap.set(sessionData.sessionId, {
-    ...sessionData,
-    studentName: nameToUse,
-    lastUpdated: new Date().toISOString()
-  });
+  let studentName = "익명 학생";
+  if (typeof body.studentName === "string" && body.studentName.trim().length > 0) {
+    const trimmed = body.studentName.trim();
+    if (trimmed.length > 50 || CONTROL_CHARS_REGEX.test(trimmed)) {
+      return { valid: false, error: "학생 이름 형식이 올바르지 않습니다." };
+    }
+    studentName = trimmed;
+  }
 
+  let gradeClass = "";
+  if (typeof body.gradeClass === "string") {
+    const trimmed = body.gradeClass.trim();
+    if (trimmed.length <= 50 && !CONTROL_CHARS_REGEX.test(trimmed)) {
+      gradeClass = trimmed;
+    }
+  }
+
+  const cleanNum = (val: any, max: number): number => {
+    if (typeof val !== "number" || !Number.isFinite(val) || Number.isNaN(val)) return 0;
+    return Math.max(0, Math.min(max, Math.round(val)));
+  };
+
+  const totalPairs = cleanNum(body.totalPairs, 500);
+  const matchedPairs = cleanNum(body.matchedPairs, 500);
+  const wrongAttempts = cleanNum(body.wrongAttempts, 10_000);
+  const timeElapsed = cleanNum(body.timeElapsed, 86_400);
+  const isCompleted = Boolean(body.isCompleted);
+
+  let selectedPages: string[] = [];
+  if (Array.isArray(body.selectedPages)) {
+    selectedPages = body.selectedPages
+      .filter((p: any) => typeof p === "string" && p.trim().length <= 30 && !CONTROL_CHARS_REGEX.test(p))
+      .slice(0, 50);
+  }
+
+  let gameMode = "standard";
+  if (typeof body.gameMode === "string" && body.gameMode.trim().length <= 30) {
+    gameMode = body.gameMode.trim();
+  }
+
+  return {
+    valid: true,
+    data: {
+      sessionId: body.sessionId,
+      studentName,
+      gradeClass,
+      totalPairs,
+      matchedPairs,
+      wrongAttempts,
+      timeElapsed,
+      isCompleted,
+      selectedPages,
+      gameMode,
+      lastUpdated: new Date().toISOString()
+    }
+  };
+}
+
+// POST /api/live-session - update or create a student's real-time playing progress
+app.post("/api/live-session", (req, res) => {
+  const validation = validateAndSanitizeLiveSession(req.body);
+  if (!validation.valid || !validation.data) {
+    return res.status(400).json({ success: false, message: validation.error || "올바른 세션 정보가 아닙니다." });
+  }
+
+  liveSessionsMap.set(validation.data.sessionId, validation.data);
   res.json({ success: true });
 });
 
@@ -481,19 +753,33 @@ app.get("/api/live-sessions", requireTeacherAuth, (req, res) => {
   res.json({ success: true, sessions });
 });
 
-// DELETE /api/live-session/:id (public for student cleanup)
+// DELETE /api/live-session/:id (public for student cleanup, validated format)
 app.delete("/api/live-session/:id", (req, res) => {
   const { id } = req.params;
-  if (id) {
-    liveSessionsMap.delete(id);
+  if (!id || typeof id !== "string" || !SESSION_ID_REGEX.test(id)) {
+    return res.status(400).json({ success: false, message: "올바르지 않은 세션 ID 형식입니다." });
   }
+  liveSessionsMap.delete(id);
   res.json({ success: true });
 });
 
-// POST /api/verify-pin
+// POST /api/verify-pin (rate-limited by IP)
 app.post("/api/verify-pin", async (req, res) => {
-  const { pin } = req.body;
-  if (!pin || typeof pin !== "string") {
+  const clientIp = getClientIp(req);
+  const now = Date.now();
+  const attempt = pinAttemptMap.get(clientIp);
+
+  if (attempt && attempt.lockedUntil && now < attempt.lockedUntil) {
+    const remainingSec = Math.ceil((attempt.lockedUntil - now) / 1000);
+    return res.status(429).json({
+      success: false,
+      message: `너무 많은 인증 실패가 발생했습니다. ${remainingSec}초 후에 다시 시도해주세요.`
+    });
+  }
+
+  const { pin } = req.body || {};
+  if (!pin || typeof pin !== "string" || pin.length > 50) {
+    recordPinFailure(clientIp);
     return res.status(401).json({ success: false, message: "선생님 비밀번호(PIN)가 올바르지 않습니다." });
   }
 
@@ -502,8 +788,12 @@ app.post("/api/verify-pin", async (req, res) => {
 
   const isValid = await verifyPin(pin.trim(), stored);
   if (!isValid) {
+    recordPinFailure(clientIp);
     return res.status(401).json({ success: false, message: "선생님 비밀번호(PIN)가 올바르지 않습니다." });
   }
+
+  // Success: Clear rate limit failure record for this IP
+  clearPinRateLimit(clientIp);
 
   // Progressive migration: If stored PIN was plaintext, upgrade to scrypt hash immediately
   if (store.settings?.passcode && !store.settings?.passcodeHash) {
@@ -641,4 +931,6 @@ async function startServer() {
   });
 }
 
-startServer();
+if (process.env.NODE_ENV !== "test") {
+  startServer();
+}
