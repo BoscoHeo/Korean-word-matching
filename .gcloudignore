@@ -1,0 +1,17 @@
+# Cloud Run Source Deployment Ignore File
+.git/
+.gitignore
+node_modules/
+dist/
+.env
+.env.*
+data/
+*.log
+firebase-debug.log
+firebase-debug.*.log
+_backup*/
+backup*/
+credentials/
+*.pem
+*.key
+*.p12
